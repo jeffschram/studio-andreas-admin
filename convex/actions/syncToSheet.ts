@@ -181,7 +181,7 @@ export const run = internalAction({
     });
     if (!data) throw new Error("Submission not found");
 
-    const { sessions, additionalEntries, instructor, payPeriod } = data;
+    const { sessions, additionalEntries, instructor } = data;
     const token = await getGoogleAccessToken();
 
     // Read instructor config from Instructors sheet tab

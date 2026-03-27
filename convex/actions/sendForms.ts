@@ -201,7 +201,7 @@ export const run = action({
       const token = crypto.randomUUID();
 
       // Find or create payPeriod + instructor records in Convex
-      const submissionId = await ctx.runMutation(api.submissions.create, {
+      await ctx.runMutation(api.submissions.create, {
         payPeriodId: await ctx.runMutation(api.payPeriods.upsert, {
           number: args.payPeriodNumber,
           startDate,
