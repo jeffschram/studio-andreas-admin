@@ -1,13 +1,18 @@
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import SubmitForm from "./pages/SubmitForm";
+import About from "./pages/About";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
-// Simple token-based routing: /submit/:token
+// Simple token-based routing
 function Router() {
   const path = window.location.pathname;
-  const match = path.match(/^\/submit\/([^/]+)$/);
 
+  if (path === "/about") {
+    return <About />;
+  }
+
+  const match = path.match(/^\/submit\/([^/]+)$/);
   if (match) {
     return <SubmitForm token={match[1]} />;
   }
