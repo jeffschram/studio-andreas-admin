@@ -1,6 +1,7 @@
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import SubmitForm from "./pages/SubmitForm";
 import About from "./pages/About";
+import Admin from "./pages/Admin";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
@@ -10,6 +11,10 @@ function Router() {
 
   if (path === "/about") {
     return <About />;
+  }
+
+  if (path === "/admin") {
+    return <Admin />;
   }
 
   const match = path.match(/^\/submit\/([^/]+)$/);

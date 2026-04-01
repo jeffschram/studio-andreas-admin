@@ -11,6 +11,7 @@
 import type * as actions_sendForms from "../actions/sendForms.js";
 import type * as actions_setupInstructors from "../actions/setupInstructors.js";
 import type * as actions_syncToSheet from "../actions/syncToSheet.js";
+import type * as http from "../http.js";
 import type * as instructors from "../instructors.js";
 import type * as payPeriods from "../payPeriods.js";
 import type * as seed from "../seed.js";
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   "actions/sendForms": typeof actions_sendForms;
   "actions/setupInstructors": typeof actions_setupInstructors;
   "actions/syncToSheet": typeof actions_syncToSheet;
+  http: typeof http;
   instructors: typeof instructors;
   payPeriods: typeof payPeriods;
   seed: typeof seed;

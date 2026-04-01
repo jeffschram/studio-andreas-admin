@@ -1,13 +1,13 @@
 "use node";
 
-import { action } from "../_generated/server";
+import { action, internalAction } from "../_generated/server";
 import { v } from "convex/values";
 import { api } from "../_generated/api";
 import * as crypto from "crypto";
 
 const SPREADSHEET_ID = "1KVEdNyJkHuZFGNG0sPzdu1b4nkAwqLqE14Yxp2bZvE8";
 const ACUITY_BASE = "https://acuityscheduling.com/api/v1";
-const APP_BASE_URL = process.env.APP_BASE_URL ?? "http://localhost:5173";
+const APP_BASE_URL = (process.env.APP_BASE_URL ?? "http://localhost:5173").replace(/\/+$/, "");
 
 // ─── Acuity ───────────────────────────────────────────────────────────────────
 
@@ -96,16 +96,20 @@ function inPeriod(dt: string, start: string, end: string): boolean {
 
 // ─── Main action ──────────────────────────────────────────────────────────────
 
-export const run = action({
-  args: {
-    payPeriodNumber: v.number(),
-    // dryRun: true → log links only, don't send emails
-    // dryRun: false → send emails (to testEmail if provided, else real instructors)
-    dryRun: v.optional(v.boolean()),
-    // testEmail: if set, all emails go here regardless of dryRun
-    testEmail: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
+const args = {
+  payPeriodNumber: v.optional(v.number()),
+  dryRun: v.optional(v.boolean()),
+  testEmail: v.optional(v.string()),
+};
+
+type SendFormsArgs = {
+  payPeriodNumber?: number;
+  dryRun?: boolean;
+  testEmail?: string;
+};
+
+// Shared handler used by both public and internal actions
+async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
     const dryRun = args.dryRun ?? true;
     const { testEmail } = args;
 
@@ -113,12 +117,32 @@ export const run = action({
 
     // 1. Read pay period dates from Pay Periods sheet tab
     const periodRows = await readRange(gToken, "Pay Periods!A2:D27");
-    const periodRow = periodRows.find((r) => parseInt(r[0]) === args.payPeriodNumber);
-    if (!periodRow) throw new Error(`Pay Period ${args.payPeriodNumber} not found in sheet`);
+
+    let periodRow: string[];
+    let resolvedPeriodNumber: number;
+
+    if (args.payPeriodNumber != null) {
+      // Explicit period requested
+      const found = periodRows.find((r) => parseInt(r[0]) === args.payPeriodNumber);
+      if (!found) throw new Error(`Pay Period ${args.payPeriodNumber} not found in sheet`);
+      periodRow = found;
+      resolvedPeriodNumber = args.payPeriodNumber;
+    } else {
+      // Auto-detect: find the most recently completed pay period (endDate <= today)
+      const today = new Date().toISOString().slice(0, 10);
+      const completed = periodRows
+        .filter((r) => r[0] && r[2] && toIsoDate(r[2]) <= today)
+        .sort((a, b) => toIsoDate(b[2]).localeCompare(toIsoDate(a[2])));
+      if (completed.length === 0) throw new Error("No completed pay periods found");
+      periodRow = completed[0];
+      resolvedPeriodNumber = parseInt(periodRow[0]);
+      console.log(`Auto-detected pay period: ${resolvedPeriodNumber}`);
+    }
+
     const [, rawStart, rawEnd] = periodRow;
     const startDate = toIsoDate(rawStart);
     const endDate = toIsoDate(rawEnd);
-    console.log(`Pay Period ${args.payPeriodNumber}: ${startDate} → ${endDate}`);
+    console.log(`Pay Period ${resolvedPeriodNumber}: ${startDate} → ${endDate}`);
 
     // 2. Read instructor list from Instructors tab
     const instructorRows = await readRange(gToken, "Instructors!A2:G20");
@@ -203,7 +227,7 @@ export const run = action({
       // Find or create payPeriod + instructor records in Convex
       await ctx.runMutation(api.submissions.create, {
         payPeriodId: await ctx.runMutation(api.payPeriods.upsert, {
-          number: args.payPeriodNumber,
+          number: resolvedPeriodNumber,
           startDate,
           endDate,
           payDate: periodRow[3] ?? "",
@@ -229,21 +253,50 @@ export const run = action({
       console.log(`Created submission for ${name}: ${link} (${sessions.length} sessions)`);
 
       // 6. Send email (or log in dry run)
-      if (!dryRun) {
+      if (dryRun) {
+        console.log(`[DRY RUN] Would email ${name} at ${email}: ${link}`);
+      } else {
         const to = testEmail ?? email;
-        // Email is sent via the andreas MCP in real usage.
-        // For now, log the details so you can send manually via MCP.
-        console.log(`TO: ${to}`);
-        console.log(`SUBJECT: Studio Andreas - Please confirm your hours (Pay Period ${args.payPeriodNumber})`);
-        console.log(`BODY: Hi ${name.split(" ")[0]},\n\nPlease confirm your hours for this pay period:\n${link}\n\nThanks!`);
+        const firstName = name.split(" ")[0];
+        const subject = `Studio Andreas - Please confirm your hours (Pay Period ${resolvedPeriodNumber})`;
+        const body = `Hi ${firstName},\n\nPlease confirm your hours for this pay period:\n${link}\n\nThanks!`;
+
+        const resendKey = process.env.RESEND_API_KEY;
+        if (!resendKey) throw new Error("RESEND_API_KEY is not set in Convex environment variables");
+
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${resendKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: "Studio Andreas <payroll@studioandreas.com>",
+            to,
+            subject,
+            text: body,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(`Resend error for ${name}: ${err}`);
+        }
+
+        console.log(`Email sent to ${to} for ${name}`);
       }
     }
 
     return {
       dryRun,
-      payPeriod: args.payPeriodNumber,
+      payPeriod: resolvedPeriodNumber,
       dateRange: `${startDate} → ${endDate}`,
       submissions: results,
     };
-  },
-});
+}
+
+// Public — callable via CLI: npx convex run actions/sendForms:run '...'
+export const run = action({ args, handler: sendFormsHandler });
+
+// Internal — callable from http.ts HTTP action
+export const runInternal = internalAction({ args, handler: sendFormsHandler });
