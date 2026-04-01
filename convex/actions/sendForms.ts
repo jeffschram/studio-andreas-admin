@@ -128,13 +128,13 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       periodRow = found;
       resolvedPeriodNumber = args.payPeriodNumber;
     } else {
-      // Auto-detect: find the most recently completed pay period (endDate <= today)
+      // Auto-detect: find the period containing today, or the most recently started
       const today = new Date().toISOString().slice(0, 10);
-      const completed = periodRows
-        .filter((r) => r[0] && r[2] && toIsoDate(r[2]) <= today)
-        .sort((a, b) => toIsoDate(b[2]).localeCompare(toIsoDate(a[2])));
-      if (completed.length === 0) throw new Error("No completed pay periods found");
-      periodRow = completed[0];
+      const started = periodRows
+        .filter((r) => r[0] && r[1] && r[2] && toIsoDate(r[1]) <= today)
+        .sort((a, b) => toIsoDate(b[1]).localeCompare(toIsoDate(a[1])));
+      if (started.length === 0) throw new Error("No active pay periods found");
+      periodRow = started[0];
       resolvedPeriodNumber = parseInt(periodRow[0]);
       console.log(`Auto-detected pay period: ${resolvedPeriodNumber}`);
     }
@@ -310,10 +310,10 @@ async function payPeriodInfoHandler() {
   const periodRows = await readRange(gToken, "Pay Periods!A2:D27");
   const today = new Date().toISOString().slice(0, 10);
 
-  // Build list of all completed pay periods (most recent first)
+  // Build list of all started pay periods (most recent first)
   const allPeriods = periodRows
-    .filter((r) => r[0] && r[2] && toIsoDate(r[2]) <= today)
-    .sort((a, b) => toIsoDate(b[2]).localeCompare(toIsoDate(a[2])))
+    .filter((r) => r[0] && r[1] && r[2] && toIsoDate(r[1]) <= today)
+    .sort((a, b) => toIsoDate(b[1]).localeCompare(toIsoDate(a[1])))
     .map((r) => ({
       periodNumber: parseInt(r[0]),
       startDate: toIsoDate(r[1]),
@@ -321,7 +321,7 @@ async function payPeriodInfoHandler() {
       payDate: r[3] ? toIsoDate(r[3]) : undefined,
     }));
 
-  if (allPeriods.length === 0) throw new Error("No completed pay periods found");
+  if (allPeriods.length === 0) throw new Error("No active pay periods found");
 
   const currentPeriodNumber = allPeriods[0].periodNumber;
 
