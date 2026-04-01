@@ -128,6 +128,7 @@ export const create = mutation({
     payPeriodId: v.id("payPeriods"),
     instructorId: v.id("instructors"),
     token: v.string(),
+    availableRates: v.optional(v.array(v.object({ label: v.string(), rate: v.number() }))),
     sessions: v.array(
       v.object({
         datetime: v.string(),
@@ -145,6 +146,7 @@ export const create = mutation({
       instructorId: args.instructorId,
       token: args.token,
       status: "pending",
+      availableRates: args.availableRates,
     });
 
     await Promise.all(

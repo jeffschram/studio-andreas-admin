@@ -32,6 +32,8 @@ export default defineSchema({
     status: v.union(v.literal("pending"), v.literal("submitted")),
     submittedAt: v.optional(v.number()), // Unix timestamp
     instructorNotes: v.optional(v.string()),
+    // Per-instructor additional hour types + rates, sourced from Instructors sheet at send time
+    availableRates: v.optional(v.array(v.object({ label: v.string(), rate: v.number() }))),
   })
     .index("by_token", ["token"])
     .index("by_pay_period", ["payPeriodId"])

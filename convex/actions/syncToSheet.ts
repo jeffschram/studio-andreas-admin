@@ -149,23 +149,21 @@ async function deleteTab(token: string, sheetId: number) {
 interface InstructorConfig {
   name: string;
   includeInPayroll: boolean;
-  techHoursRate: number; // $/hr
 }
 
 async function getInstructorConfigs(token: string): Promise<Map<string, InstructorConfig>> {
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent("Instructors!A2:G20")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent("Instructors!A2:E20")}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const data = await res.json() as { values?: string[][] };
   const map = new Map<string, InstructorConfig>();
   for (const row of data.values ?? []) {
-    const [name, , , , includeInPayroll, techHoursRate] = row;
+    const [name, , , , includeInPayroll] = row;
     if (!name) continue;
     map.set(name, {
       name,
       includeInPayroll: includeInPayroll?.toLowerCase() === "yes",
-      techHoursRate: parseFloat(techHoursRate ?? "0") || 0,
     });
   }
   return map;
@@ -231,28 +229,28 @@ export const run = internalAction({
         // Insert blank rows after the instructor's last row
         await insertRowsAfter(token, payrollSheetId, lastRow, additionalEntries.length);
 
-        // Write each additional entry into the newly inserted rows
-        const techHoursRate = instructorConfig?.techHoursRate ?? 0;
+        // Build rate lookup from submission's availableRates
+        const rateMap = new Map(
+          (data.submission.availableRates ?? []).map((r) => [r.label, r.rate])
+        );
+
         const rows = additionalEntries.map((entry, i) => {
           const n = lastRow + 1 + i;
-          // Calculate earnings based on type and rate from Instructors sheet
-          let earnings = "";
-          if (entry.type === "Tech Hours" && techHoursRate > 0) {
-            earnings = (entry.hours * techHoursRate).toFixed(2);
-          }
+          const rate = rateMap.get(entry.type) ?? 0;
+          const earnings = rate > 0 ? (entry.hours * rate).toFixed(2) : "";
           return [
-            "",                          // A: Pay Period (blank, same block)
-            "",                          // B: Instructor (blank, same block)
-            entry.notes ?? "",           // C: Info / description
-            entry.type,                  // D: Category (Tech Hours etc.)
-            entry.hours.toString(),      // E: Quantity / hours
-            "TRUE",                      // F: Confirmed
-            techHoursRate > 0 ? `$${techHoursRate.toFixed(2)}` : "", // G: Rate
-            earnings ? `=E${n}*G${n}` : "",  // H: Gross Total
-            earnings,                    // I: Instructor Earnings (rate × hours)
-            "",                          // J: Commissions
-            "",                          // K: To Be Paid (already in first row of block)
-            entry.date,                  // L: Date for reference
+            "",                                          // A: Pay Period (blank, same block)
+            "",                                          // B: Instructor (blank, same block)
+            entry.notes ?? "",                           // C: Info / description
+            entry.type,                                  // D: Category
+            entry.hours.toString(),                      // E: Quantity / hours
+            "TRUE",                                      // F: Confirmed
+            rate > 0 ? `$${rate.toFixed(2)}` : "",      // G: Rate
+            earnings ? `=E${n}*G${n}` : "",              // H: Gross Total
+            earnings,                                    // I: Instructor Earnings
+            "",                                          // J: Commissions
+            "",                                          // K: To Be Paid
+            entry.date,                                  // L: Date for reference
           ];
         });
 

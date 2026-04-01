@@ -23,13 +23,7 @@ interface AdditionalEntry {
   notes: string;
 }
 
-const ADDITIONAL_TYPES = [
-  "Tech Hours",
-  "Open Studio",
-  "Meeting",
-  "Prep / Setup",
-  "Other",
-];
+// Types are now per-instructor, sourced from submission.availableRates
 
 const CATEGORY_COLORS: Record<string, string> = {
   Class: "bg-blue-100 text-blue-800",
@@ -101,6 +95,8 @@ export default function SubmitForm({ token }: { token: string }) {
   }
 
   const { submission, instructor, payPeriod, sessions } = data;
+  const availableRates = submission.availableRates ?? [];
+  const availableTypes = availableRates.map((r) => r.label);
 
   if (submission.status === "submitted" || submitted) {
     return (
@@ -124,7 +120,7 @@ export default function SubmitForm({ token }: { token: string }) {
   const addEntry = () => {
     setAdditionalEntries([
       ...additionalEntries,
-      { date: "", type: "Tech Hours", hours: 0, notes: "" },
+      { date: "", type: availableTypes[0] ?? "", hours: 0, notes: "" },
     ]);
   };
 
@@ -256,8 +252,8 @@ export default function SubmitForm({ token }: { token: string }) {
 
         <Separator />
 
-        {/* Section 2: Additional hours */}
-        <Card>
+        {/* Section 2: Additional hours — only shown if instructor has applicable rate types */}
+        {availableTypes.length > 0 && <Card>
           <CardHeader>
             <CardTitle className="text-base">Additional hours</CardTitle>
             <CardDescription>
@@ -287,7 +283,7 @@ export default function SubmitForm({ token }: { token: string }) {
                     onChange={(e) => updateEntry(i, "type", e.target.value)}
                     className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   >
-                    {ADDITIONAL_TYPES.map((t) => (
+                    {availableTypes.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
@@ -336,7 +332,7 @@ export default function SubmitForm({ token }: { token: string }) {
               + Add hours
             </Button>
           </CardContent>
-        </Card>
+        </Card>}
 
         {/* Notes */}
         <Card>

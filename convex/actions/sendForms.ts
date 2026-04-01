@@ -144,8 +144,11 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
     const endDate = toIsoDate(rawEnd);
     console.log(`Pay Period ${resolvedPeriodNumber}: ${startDate} → ${endDate}`);
 
-    // 2. Read instructor list from Instructors tab
-    const instructorRows = await readRange(gToken, "Instructors!A2:G20");
+    // 2. Read instructor list + rate headers from Instructors tab
+    const [rateHeaderRow, ...instructorRows] = await readRange(gToken, "Instructors!A1:M20");
+    // Rate type labels start at column F (index 5)
+    const rateHeaders = (rateHeaderRow ?? []).slice(5);
+
     const activeInstructors = instructorRows.filter(
       (r) => r[0] && r[4]?.toLowerCase() === "yes"
     );
@@ -238,6 +241,10 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
           acuityCalendarId: calId,
         }),
         token,
+        // Build per-instructor available rates from sheet columns F+ (index 5+)
+        availableRates: rateHeaders
+          .map((label, i) => ({ label, rate: parseFloat(instructorRow[5 + i] ?? "") || 0 }))
+          .filter((r) => r.rate > 0),
         sessions: sessions.map((s) => ({
           datetime: s.datetime,
           info: s.info,

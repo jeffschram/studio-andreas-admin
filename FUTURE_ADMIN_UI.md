@@ -52,4 +52,30 @@ Replace Claude's role with a **password-protected admin page** on the existing V
 
 ### Functionality to Verify
 
-- [ ] The pay periods are defined in the drive > STUDIO ANDREAS > STUDIO_ANDREAS_PAYROLL sheet https://docs.google.com/spreadsheets/d/1KVEdNyJkHuZFGNG0sPzdu1b4nkAwqLqE14Yxp2bZvE8/edit?gid=1280079424#gid=1280079424 in the 'Pay Periods' tab. The payroll dates relevant to this app are the Start Date and End Date. "Payroll Deadline" and "Pay Day" are for the human admins to use for reference. - The google drive sheet should be considered the source of truth and if it is ever edited the app should update accordingly. maybe this means we periodically check for sync.
+- [x] The pay periods are defined in the drive > STUDIO ANDREAS > STUDIO_ANDREAS_PAYROLL sheet https://docs.google.com/spreadsheets/d/1KVEdNyJkHuZFGNG0sPzdu1b4nkAwqLqE14Yxp2bZvE8/edit?gid=1280079424#gid=1280079424 in the 'Pay Periods' tab. The payroll dates relevant to this app are the Start Date and End Date. "Payroll Deadline" and "Pay Day" are for the human admins to use for reference. - The google drive sheet should be considered the source of truth and if it is ever edited the app should update accordingly. maybe this means we periodically check for sync.
+
+### Updates to Pay Structure
+
+- [ ] Additional Hours are different and only applicable to some instructors
+	That means that each instructor will have different hourly-label options that correspond to an hourly rate. It is no longer just 'Tech Hours', 'Meetings', etc for each instructor - it's unique to each.
+	What hourly-label applies to the instructor and the hourly rate is defined in the google sheet in 'Instructors' and the sheet should be treated as the source of truth. (similar to the pay periods)
+
+	For example, the google sheet currently defines:
+	
+	- Cheslea Danburg
+		- Additional Classtime: 25
+		- Event: 100
+	- Herb Thomas
+		- Basic Hourly: 20
+		- Youth Class: 35
+	- Justin Wiest
+	- Maria Spiess
+	- Mark Andreas
+	- Nerea Nicholson
+		- Tech Hours: 25
+		- Open Studio: 14
+		- Event: 100
+	- Olivia Lapine
+	- Owen Hughes
+		- Tech Hours: 20
+		- Teaching Assist: 25
