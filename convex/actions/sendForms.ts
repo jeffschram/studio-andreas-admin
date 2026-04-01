@@ -300,3 +300,41 @@ export const run = action({ args, handler: sendFormsHandler });
 
 // Internal — callable from http.ts HTTP action
 export const runInternal = internalAction({ args, handler: sendFormsHandler });
+
+// ─── Pay period info (lightweight, no submissions created) ───────────────────
+
+async function payPeriodInfoHandler() {
+  const gToken = await getGoogleAccessToken();
+
+  // Read all pay period dates
+  const periodRows = await readRange(gToken, "Pay Periods!A2:D27");
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Build list of all completed pay periods (most recent first)
+  const allPeriods = periodRows
+    .filter((r) => r[0] && r[2] && toIsoDate(r[2]) <= today)
+    .sort((a, b) => toIsoDate(b[2]).localeCompare(toIsoDate(a[2])))
+    .map((r) => ({
+      periodNumber: parseInt(r[0]),
+      startDate: toIsoDate(r[1]),
+      endDate: toIsoDate(r[2]),
+      payDate: r[3] ? toIsoDate(r[3]) : undefined,
+    }));
+
+  if (allPeriods.length === 0) throw new Error("No completed pay periods found");
+
+  const currentPeriodNumber = allPeriods[0].periodNumber;
+
+  // Read active instructors
+  const instructorRows = await readRange(gToken, "Instructors!A2:G20");
+  const instructors = instructorRows
+    .filter((r) => r[0] && r[4]?.toLowerCase() === "yes")
+    .map((r) => ({ name: r[0], email: r[1] }));
+
+  return { allPeriods, currentPeriodNumber, instructors };
+}
+
+export const getPayPeriodInfoInternal = internalAction({
+  args: {},
+  handler: payPeriodInfoHandler,
+});

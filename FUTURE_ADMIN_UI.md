@@ -43,31 +43,13 @@ Replace Claude's role with a **password-protected admin page** on the existing V
    - "Send forms to all instructors" button → calls the HTTP action
    - Displays results: who was emailed, how many sessions each
 
-1. [ ] **Optional: submission review panel** (~2 hrs)
-   - Shows all submissions for the current pay period
-   - Flags disputed sessions for admin attention
-   - Currently visible in Convex dashboard; could surface here
+### Additional Features
 
-### Who benefits
+- [x] Show pay period in the Show Payroll Page
+	- [x] under 'Automatically detects the most recently completed pay period and emails each instructor a link to confirm their hours.' show the pay period number and the dates in nice human-readable date format
 
-- **Client hands-off** — no Claude Desktop install, no MCP configuration on Windows
-- **Future admins** — no technical setup required, just a URL and password
-- **Reliability** — no dependency on Claude being available or a local machine being on
+- [x] Ideally the admin would have a page for each pay period. It would default to the current pay period. If they haven't sent emails yet they'd be prompted to do so. If they have sent the emails they can see the status of each instructor
 
-### When to do this
+### Functionality to Verify
 
-Good time to revisit this once:
-- The current Claude Desktop workflow has been tested through at least one full real pay period
-- The client confirms they want a more self-contained solution
-- Or: onboarding a new admin who isn't comfortable with Claude Desktop
-
----
-
-## Quick Estimate
-
-| Task | Time |
-|------|------|
-| Resend integration | ~30 min |
-| HTTP action endpoint | ~1 hr |
-| Admin page (send button + results) | ~2 hrs |
-| **Total** | **~3.5 hrs** |
+- [ ] The pay periods are defined in the drive > STUDIO ANDREAS > STUDIO_ANDREAS_PAYROLL sheet https://docs.google.com/spreadsheets/d/1KVEdNyJkHuZFGNG0sPzdu1b4nkAwqLqE14Yxp2bZvE8/edit?gid=1280079424#gid=1280079424 in the 'Pay Periods' tab. The payroll dates relevant to this app are the Start Date and End Date. "Payroll Deadline" and "Pay Day" are for the human admins to use for reference. - The google drive sheet should be considered the source of truth and if it is ever edited the app should update accordingly. maybe this means we periodically check for sync.

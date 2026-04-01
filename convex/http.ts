@@ -61,4 +61,45 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/pay-period-info
+http.route({
+  path: "/api/pay-period-info",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// GET /api/pay-period-info — lightweight, no submissions created
+http.route({
+  path: "/api/pay-period-info",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const result = await ctx.runAction(internal.actions.sendForms.getPayPeriodInfoInternal, {});
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }),
+});
+
 export default http;
