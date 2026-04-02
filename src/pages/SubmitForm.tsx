@@ -221,10 +221,17 @@ export default function SubmitForm({ token }: { token: string }) {
                     htmlFor={session._id}
                     className="font-medium cursor-pointer leading-snug"
                   >
-                    {session.info}
+                    {/* Strip internal (Start)/(End) suffix — shown in subtitle instead */}
+                    {session.eventType === "start" || session.eventType === "end"
+                      ? session.info.replace(/ \((Start|End)\)$/, "")
+                      : session.info}
                   </Label>
                   <p className="text-sm text-muted-foreground mt-0.5">
-                    {formatDate(session.datetime)}
+                    {session.eventType === "start"
+                      ? `Started ${formatDate(session.datetime)}`
+                      : session.eventType === "end"
+                      ? `Ended ${formatDate(session.datetime)}`
+                      : formatDate(session.datetime)}
                     {session.quantity > 1 && (
                       <span> &middot; {session.quantity} students</span>
                     )}
@@ -232,11 +239,19 @@ export default function SubmitForm({ token }: { token: string }) {
                 </div>
                 <Badge
                   className={`text-xs shrink-0 ${
-                    CATEGORY_COLORS[session.category] ?? ""
+                    session.eventType === "start"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : session.eventType === "end"
+                      ? "bg-rose-100 text-rose-800"
+                      : (CATEGORY_COLORS[session.category] ?? "")
                   }`}
                   variant="outline"
                 >
-                  {session.category}
+                  {session.eventType === "start"
+                    ? "Series Start"
+                    : session.eventType === "end"
+                    ? "Series End"
+                    : session.category}
                 </Badge>
               </div>
             ))}

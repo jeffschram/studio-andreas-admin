@@ -49,6 +49,9 @@ export default defineSchema({
     quantity: v.number(), // Student count or 1 for privates
     pricePerBooking: v.number(),
     confirmedByInstructor: v.boolean(), // Instructor checks this
+    // For series classes: "start" = first session in series, "end" = last session in series
+    // "session" = single occurrence (privates, open studio, etc.)
+    eventType: v.optional(v.union(v.literal("start"), v.literal("end"), v.literal("session"))),
     // For syncing back to the spreadsheet
     sheetRow: v.optional(v.number()),
     syncedToSheet: v.boolean(),

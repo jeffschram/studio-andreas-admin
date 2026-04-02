@@ -56,7 +56,7 @@ Replace Claude's role with a **password-protected admin page** on the existing V
 
 ### Updates to Pay Structure
 
-- [ ] Additional Hours are different and only applicable to some instructors
+- [x] Additional Hours are different and only applicable to some instructors
 	That means that each instructor will have different hourly-label options that correspond to an hourly rate. It is no longer just 'Tech Hours', 'Meetings', etc for each instructor - it's unique to each.
 	What hourly-label applies to the instructor and the hourly rate is defined in the google sheet in 'Instructors' and the sheet should be treated as the source of truth. (similar to the pay periods)
 
@@ -79,3 +79,39 @@ Replace Claude's role with a **password-protected admin page** on the existing V
 	- Owen Hughes
 		- Tech Hours: 20
 		- Teaching Assist: 25
+
+[x] Instructors paid at the beginning of a class and end of a class.
+Instructors are still paid the same rate for a class, the amount paid is defined in the spreadsheet with the function:
+
+=IF(TRIM(LOWER(D55))="private",(H55*0.97)*0.75,IF(TRIM(LOWER(D55))="class",(H55*0.87)/2,IF(TRIM(LOWER(D55))="workshop",(H55*0.87)/2,IF(TRIM(LOWER(D55))="membership",(H55*0.97)*0.1,""))))
+
+where the 'H' value here is the Gross Total, the Price per Booking times the quantity of people ('E'). So for a class they get 0.87 times the Gross Total.
+
+However one thing is kinda tricky. The Admins want to pay the instructors half when the class starts and half when it ends. (That's why we have the divided by two in the calculation)
+
+This means for a pay period we need to determine if a class has started, and/or if a class has ended. They only get paid twice for a class, during a pay period when the class started and during a pay period when a class ended.
+The email sent to the instructor should only verify that a class has started/ended. 
+
+This is an update because currently we are paying during each pay period and it is a much larger amount than it should be.
+
+
+
+**About how classes work in Acuity:**
+
+1. When a "class" runs for multiple sessions (e.g. a 6-week ceramics course), are all sessions created upfront in Acuity as recurring appointments? Or added week by week?
+2. Is there anything in Acuity that defines when a class "ends" — like a fixed number of sessions or an end date on the appointment type?
+
+They will be added ahead of time. acuity has an appointmentType and i believe we added get_appointment_types to our system to pull that data in. For instance there is a (i think a category) of Mid-Spring Semester Woodworking Classes, then a class, appointmentType, called '[Woodworking Youth Monday Evening](https://secure.acuityscheduling.com/appointments.php?action=editAppointmentType&id=90730751) (8 hours @ $300.00)'  then we might have 2 ways of defining when the class ends.
+A) the description states "Mondays 5 - 7 PM | March 30th-April 20th"
+B) There are individual classes within that with dates
+
+
+
+**About the pay logic:**  
+3. A class runs for, say, 6 weeks spanning 3 pay periods. The instructor gets paid in the pay period the first session falls in, and again in the pay period the last session falls in — but nothing in the middle pay periods. Is that right?  - correct, nothing in the middle pay period. They are only paid if the start or end falls within a pay period.
+4. What if a class both starts AND ends in the same pay period (very short class)? Does the instructor get both payments in that period, or just one?  Both
+5. For **Private** sessions — those look like they're paid per-session as they happen (no start/end split). Is that correct? Correct
+
+**About the form:**  
+6. What should the instructor actually see and confirm? Right now they see every individual session. With this change, would they instead see something like "Ceramics 101 — started Mar 30" and "Ceramics 101 — ends Apr 12"? - yes they'd see " Intro to Wheel Throwing Wednesday Mornings: Started Mar 30"
+

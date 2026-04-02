@@ -136,6 +136,7 @@ export const create = mutation({
         category: v.string(),
         quantity: v.number(),
         pricePerBooking: v.number(),
+        eventType: v.optional(v.union(v.literal("start"), v.literal("end"), v.literal("session"))),
         sheetRow: v.optional(v.number()),
       })
     ),
@@ -158,6 +159,7 @@ export const create = mutation({
           category: session.category,
           quantity: session.quantity,
           pricePerBooking: session.pricePerBooking,
+          eventType: session.eventType,
           sheetRow: session.sheetRow,
           confirmedByInstructor: true, // default to confirmed; instructor unchecks to dispute
           syncedToSheet: false,

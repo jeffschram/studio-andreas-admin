@@ -77,6 +77,12 @@ function shorten(name: string, max = 40): string {
   return name.length <= max ? name : name.slice(0, max).replace(/\s\S*$/, "");
 }
 
+function addDays(isoDate: string, days: number): string {
+  const d = new Date(isoDate + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // Convert "03-Mar-26" → "2026-03-03"
 function toIsoDate(sheetDate: string): string {
   const months: Record<string, string> = {
@@ -161,10 +167,29 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       if (calId) calendarMap.set(calId, row);
     }
 
-    // 3. Fetch appointments from Acuity
-    const appointments = await acuityFetch(
+    // 3. Fetch appointment types (to identify series and get class sizes / full-course prices)
+    const apptTypesRaw = await acuityFetch("/appointment-types");
+    const apptTypeMap = new Map<number, { name: string; acuityType: string; classSize: number; price: number }>();
+    if (Array.isArray(apptTypesRaw)) {
+      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; classSize: number | null; price: string }>) {
+        apptTypeMap.set(t.id, {
+          name: t.name,
+          acuityType: t.type, // "service" | "class" | "series"
+          classSize: t.classSize ?? 1,
+          price: parseFloat(t.price) || 0,
+        });
+      }
+    }
+    console.log(`Loaded ${apptTypeMap.size} appointment types`);
+
+    // 4. Fetch appointments from Acuity
+    const acuityResponse = await acuityFetch(
       `/appointments?minDate=${startDate}&maxDate=${endDate}&max=500`
-    ) as Array<{
+    );
+    if (!Array.isArray(acuityResponse)) {
+      throw new Error(`Acuity API error: ${JSON.stringify(acuityResponse)}`);
+    }
+    const appointments = acuityResponse as Array<{
       calendarID: number;
       appointmentTypeID: number;
       datetime: string;
@@ -175,7 +200,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
     }>;
     console.log(`Fetched ${appointments.length} appointments from Acuity`);
 
-    // 4. Group by instructor → collate into sessions
+    // 5. Group by instructor → collate into sessions
     const byCalendar = new Map<number, typeof appointments>();
     for (const appt of appointments) {
       if (!inPeriod(appt.datetime, startDate, endDate)) continue;
@@ -187,23 +212,48 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
     const results: { instructor: string; email: string; link: string }[] = [];
 
+    type SessionData = {
+      datetime: string;
+      info: string;
+      category: string;
+      qty: number;
+      price: number;
+      eventType: "start" | "end" | "session";
+    };
+
     for (const [calId, appts] of byCalendar) {
       const instructorRow = calendarMap.get(calId)!;
       const [name, email] = instructorRow;
 
-      // Collate into sessions
-      const privateRows: { datetime: string; info: string; category: string; qty: number; price: number }[] = [];
-      const groupMap = new Map<string, typeof appts>();
+      // Separate series (multi-session classes) from non-series appointments
+      const seriesByType = new Map<number, typeof appts>();
+      const nonSeriesAppts: typeof appts = [];
 
       for (const a of appts) {
+        const typeInfo = apptTypeMap.get(a.appointmentTypeID);
+        if (typeInfo?.acuityType === "series") {
+          const list = seriesByType.get(a.appointmentTypeID) ?? [];
+          list.push(a);
+          seriesByType.set(a.appointmentTypeID, list);
+        } else {
+          nonSeriesAppts.push(a);
+        }
+      }
+
+      // Non-series: privates (per occurrence) + everything else (grouped by type+timeslot)
+      const allSessions: SessionData[] = [];
+      const groupMap = new Map<string, typeof appts>();
+
+      for (const a of nonSeriesAppts) {
         const cat = getCategory(a.type);
         if (cat === "Private") {
-          privateRows.push({
+          allSessions.push({
             datetime: a.datetime,
             info: `${a.firstName} ${a.lastName}`.trim(),
             category: "Private",
             qty: 1,
             price: parseFloat(a.price) || 0,
+            eventType: "session",
           });
         } else {
           const key = `${a.appointmentTypeID}|${a.datetime.slice(0, 16)}`;
@@ -213,18 +263,80 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
         }
       }
 
-      const sessions = [
-        ...Array.from(groupMap.values()).map((group) => ({
+      for (const group of groupMap.values()) {
+        allSessions.push({
           datetime: group[0].datetime,
           info: shorten(group[0].type),
           category: getCategory(group[0].type),
           qty: group.length,
           price: parseFloat(group[0].price) || 0,
-        })),
-        ...privateRows,
-      ].sort((a, b) => a.datetime.localeCompare(b.datetime));
+          eventType: "session",
+        });
+      }
 
-      // 5. Create Convex submission record
+      // Series: determine which types start or end in this pay period
+      if (seriesByType.size > 0) {
+        const seriesChecks = await Promise.all(
+          Array.from(seriesByType.entries()).map(async ([typeId, typeAppts]) => {
+            const sorted = [...typeAppts].sort((a, b) => a.datetime.localeCompare(b.datetime));
+            const firstDate = sorted[0].datetime.slice(0, 10);
+            const lastDate = sorted[sorted.length - 1].datetime.slice(0, 10);
+            const typeInfo = apptTypeMap.get(typeId);
+
+            // Parallel: check for any sessions before this period (→ isStart) and after (→ isEnd)
+            const [beforeRaw, afterRaw] = await Promise.all([
+              acuityFetch(`/appointments?appointmentTypeID=${typeId}&calendarID=${calId}&maxDate=${addDays(firstDate, -1)}&max=1`),
+              acuityFetch(`/appointments?appointmentTypeID=${typeId}&calendarID=${calId}&minDate=${addDays(lastDate, 1)}&max=1`),
+            ]);
+
+            const isStart = Array.isArray(beforeRaw) && beforeRaw.length === 0;
+            const isEnd = Array.isArray(afterRaw) && afterRaw.length === 0;
+
+            return { typeId, typeInfo, sorted, isStart, isEnd };
+          })
+        );
+
+        for (const { typeInfo, sorted, isStart, isEnd } of seriesChecks) {
+          if (!isStart && !isEnd) {
+            console.log(`  Series type ${typeInfo?.name ?? "?"} — middle of series, skipping`);
+            continue;
+          }
+
+          const typeName = typeInfo?.name ?? sorted[0].type;
+          // classSize from appointment type; fall back to enrollment count this period
+          const classSize = (typeInfo?.classSize ?? 0) > 0 ? typeInfo!.classSize : sorted.length;
+          // Price from appointment type (full-course price per booking)
+          const price = (typeInfo?.price ?? 0) > 0 ? typeInfo!.price : parseFloat(sorted[0].price) || 0;
+          const category = getCategory(typeName);
+
+          if (isStart) {
+            allSessions.push({
+              datetime: sorted[0].datetime,
+              info: `${shorten(typeName)} (Start)`,
+              category,
+              qty: classSize,
+              price,
+              eventType: "start",
+            });
+            console.log(`  → Series START: ${typeName}`);
+          }
+          if (isEnd) {
+            allSessions.push({
+              datetime: sorted[sorted.length - 1].datetime,
+              info: `${shorten(typeName)} (End)`,
+              category,
+              qty: classSize,
+              price,
+              eventType: "end",
+            });
+            console.log(`  → Series END: ${typeName}`);
+          }
+        }
+      }
+
+      const sessions = allSessions.sort((a, b) => a.datetime.localeCompare(b.datetime));
+
+      // 6. Create Convex submission record
       const token = crypto.randomUUID();
 
       // Find or create payPeriod + instructor records in Convex
@@ -251,6 +363,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
           category: s.category,
           quantity: s.qty,
           pricePerBooking: s.price,
+          eventType: s.eventType,
         })),
       });
 
@@ -259,7 +372,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
       console.log(`Created submission for ${name}: ${link} (${sessions.length} sessions)`);
 
-      // 6. Send email (or log in dry run)
+      // 7. Send email (or log in dry run)
       if (dryRun) {
         console.log(`[DRY RUN] Would email ${name} at ${email}: ${link}`);
       } else {

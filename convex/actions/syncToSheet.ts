@@ -44,33 +44,6 @@ async function getGoogleAccessToken(): Promise<string> {
 
 // ─── Sheets API helpers ───────────────────────────────────────────────────────
 
-async function getSheetsMeta(token: string) {
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return (await res.json()) as {
-    sheets: { properties: { title: string; sheetId: number } }[];
-  };
-}
-
-async function putCell(token: string, range: string, value: string) {
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ values: [[value]] }),
-    }
-  );
-  const json = await res.json();
-  if (!res.ok) console.error(`putCell error for ${range}:`, JSON.stringify(json));
-  return json;
-}
-
 async function writeRows(token: string, range: string, rows: string[][]) {
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
@@ -88,60 +61,28 @@ async function writeRows(token: string, range: string, rows: string[][]) {
   return json;
 }
 
-async function insertRowsAfter(
-  token: string,
-  sheetId: number,
-  afterRow1Indexed: number,
-  count: number
-) {
-  // Sheets API is 0-indexed; inserting at startIndex = afterRow pushes everything down
-  const startIndex = afterRow1Indexed;
+async function appendRows(token: string, rows: string[][]): Promise<number> {
+  // Append rows after last data row in Payroll tab. Returns the 1-indexed start row of appended data.
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PAYROLL_TAB)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        requests: [
-          {
-            insertDimension: {
-              range: {
-                sheetId,
-                dimension: "ROWS",
-                startIndex,
-                endIndex: startIndex + count,
-              },
-              inheritFromBefore: true,
-            },
-          },
-        ],
-      }),
+      body: JSON.stringify({ values: rows }),
     }
   );
-  const json = await res.json();
-  if (!res.ok) console.error("insertRows error:", JSON.stringify(json));
-  return json;
-}
-
-async function deleteTab(token: string, sheetId: number) {
-  const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        requests: [{ deleteSheet: { sheetId } }],
-      }),
-    }
-  );
-  const json = await res.json();
-  if (!res.ok) console.error("deleteTab error:", JSON.stringify(json));
+  const json = await res.json() as { updates?: { updatedRange?: string } };
+  if (!res.ok) {
+    console.error("appendRows error:", JSON.stringify(json));
+    return -1;
+  }
+  // Parse the start row from updatedRange like "Payroll!A42:L50"
+  const updatedRange = json.updates?.updatedRange ?? "";
+  const match = updatedRange.match(/!A(\d+)/);
+  return match ? parseInt(match[1]) : -1;
 }
 
 // ─── Read instructor config from sheet ───────────────────────────────────────
@@ -169,6 +110,25 @@ async function getInstructorConfigs(token: string): Promise<Map<string, Instruct
   return map;
 }
 
+// ─── Payment formula ──────────────────────────────────────────────────────────
+
+// The spreadsheet formula for instructor earnings based on category:
+//   Private:    (H * 0.97) * 0.75   — per occurrence
+//   Class:      (H * 0.87) / 2      — at series start OR end (half each time)
+//   Workshop:   (H * 0.87) / 2      — same as class
+//   Membership: (H * 0.97) * 0.1
+//   Other:      blank
+function earningsFormula(rowNum: number): string {
+  const D = `D${rowNum}`;
+  const H = `H${rowNum}`;
+  return (
+    `=IF(TRIM(LOWER(${D}))="private",(${H}*0.97)*0.75,` +
+    `IF(TRIM(LOWER(${D}))="class",(${H}*0.87)/2,` +
+    `IF(TRIM(LOWER(${D}))="workshop",(${H}*0.87)/2,` +
+    `IF(TRIM(LOWER(${D}))="membership",(${H}*0.97)*0.1,""))))`
+  );
+}
+
 // ─── Main sync action ─────────────────────────────────────────────────────────
 
 export const run = internalAction({
@@ -179,11 +139,11 @@ export const run = internalAction({
     });
     if (!data) throw new Error("Submission not found");
 
-    const { sessions, additionalEntries, instructor } = data;
-    const token = await getGoogleAccessToken();
+    const { sessions, additionalEntries, instructor, payPeriod, submission } = data;
+    const gToken = await getGoogleAccessToken();
 
     // Read instructor config from Instructors sheet tab
-    const instructorConfigs = await getInstructorConfigs(token);
+    const instructorConfigs = await getInstructorConfigs(gToken);
     const instructorConfig = instructor ? instructorConfigs.get(instructor.name) : undefined;
 
     if (instructorConfig && !instructorConfig.includeInPayroll) {
@@ -191,89 +151,88 @@ export const run = internalAction({
       return;
     }
 
-    // Get sheet metadata (tab IDs)
-    const meta = await getSheetsMeta(token);
-    const payrollSheet = meta.sheets.find(
-      (s) => s.properties.title === PAYROLL_TAB
+    const instructorName = instructor?.name ?? "Unknown";
+    const payPeriodNum = payPeriod?.number ?? 0;
+    const rateMap = new Map(
+      (submission.availableRates ?? []).map((r) => [r.label, r.rate])
     );
-    if (!payrollSheet) throw new Error(`Tab "${PAYROLL_TAB}" not found in sheet`);
-    const payrollSheetId = payrollSheet.properties.sheetId;
 
-    // Clean up the old "Additional Hours" tab if it exists
-    const oldTab = meta.sheets.find(
-      (s) => s.properties.title === "Additional Hours"
-    );
-    if (oldTab) {
-      await deleteTab(token, oldTab.properties.sheetId);
-      console.log("Deleted old Additional Hours tab");
+    // Build placeholder rows — we'll append first, then rewrite with correct row numbers
+    // (Two-step: append placeholders → get start row → rewrite with formulas)
+    const totalRows = sessions.length + additionalEntries.length;
+    if (totalRows === 0) {
+      console.log(`No rows to write for ${instructorName}`);
+      await ctx.runMutation(internal.submissions.markSynced, { submissionId });
+      return;
     }
 
-    // 1. Update Confirmed column (F) for each session with a known sheet row
+    // Step 1: Append placeholder rows to learn which rows we get
+    const placeholders = Array.from({ length: totalRows }, (_, i) => [
+      i === 0 ? String(payPeriodNum) : "",
+      i === 0 ? instructorName : "",
+      "...", // will be overwritten
+    ]);
+    const startRow = await appendRows(gToken, placeholders);
+    if (startRow < 0) {
+      throw new Error("Failed to append placeholder rows to Payroll tab");
+    }
+
+    // Step 2: Build proper rows now that we know row numbers
+    const rows: string[][] = [];
+    let rowIdx = startRow;
+
     for (const session of sessions) {
-      if (!session.sheetRow) continue;
-      const value = session.confirmedByInstructor ? "TRUE" : "DISPUTED";
-      await putCell(token, `${PAYROLL_TAB}!F${session.sheetRow}`, value);
+      const isFirst = rows.length === 0;
+      const grossFormula = session.pricePerBooking > 0 ? `=E${rowIdx}*G${rowIdx}` : "";
+      rows.push([
+        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+        isFirst ? instructorName : "",                     // B: Instructor
+        session.info,                                      // C: Class name / description
+        session.category,                                  // D: Category
+        String(session.quantity),                          // E: Student count (or 1 for privates)
+        session.confirmedByInstructor ? "TRUE" : "DISPUTED", // F: Confirmed
+        session.pricePerBooking > 0 ? `$${session.pricePerBooking.toFixed(2)}` : "", // G: Price per booking
+        grossFormula,                                      // H: Gross Total (=E*G)
+        session.pricePerBooking > 0 ? earningsFormula(rowIdx) : "", // I: Instructor Earnings
+        "",                                                // J: Commissions
+        session.pricePerBooking > 0 ? `=I${rowIdx}` : "", // K: To Be Paid
+        session.datetime.slice(0, 10),                     // L: Date
+      ]);
+      rowIdx++;
     }
 
-    // 2. Insert additional entries into the instructor's block
-    if (additionalEntries.length > 0) {
-      const sessionRows = sessions
-        .map((s) => s.sheetRow)
-        .filter((r): r is number => r !== undefined);
-
-      const lastRow = sessionRows.length > 0 ? Math.max(...sessionRows) : null;
-
-      if (lastRow === null) {
-        console.warn("No sheetRows found for sessions — cannot place additional entries");
-      } else {
-        // Insert blank rows after the instructor's last row
-        await insertRowsAfter(token, payrollSheetId, lastRow, additionalEntries.length);
-
-        // Build rate lookup from submission's availableRates
-        const rateMap = new Map(
-          (data.submission.availableRates ?? []).map((r) => [r.label, r.rate])
-        );
-
-        const rows = additionalEntries.map((entry, i) => {
-          const n = lastRow + 1 + i;
-          const rate = rateMap.get(entry.type) ?? 0;
-          const earnings = rate > 0 ? (entry.hours * rate).toFixed(2) : "";
-          return [
-            "",                                          // A: Pay Period (blank, same block)
-            "",                                          // B: Instructor (blank, same block)
-            entry.notes ?? "",                           // C: Info / description
-            entry.type,                                  // D: Category
-            entry.hours.toString(),                      // E: Quantity / hours
-            "TRUE",                                      // F: Confirmed
-            rate > 0 ? `$${rate.toFixed(2)}` : "",      // G: Rate
-            earnings ? `=E${n}*G${n}` : "",              // H: Gross Total
-            earnings,                                    // I: Instructor Earnings
-            "",                                          // J: Commissions
-            "",                                          // K: To Be Paid
-            entry.date,                                  // L: Date for reference
-          ];
-        });
-
-        const startRow = lastRow + 1;
-        const endRow = lastRow + additionalEntries.length;
-        await writeRows(
-          token,
-          `${PAYROLL_TAB}!A${startRow}:L${endRow}`,
-          rows
-        );
-
-        console.log(
-          `Inserted ${additionalEntries.length} additional entries after row ${lastRow}`
-        );
-      }
+    for (const entry of additionalEntries) {
+      const isFirst = rows.length === 0;
+      const rate = rateMap.get(entry.type) ?? 0;
+      const earnings = rate > 0 ? (entry.hours * rate).toFixed(2) : "";
+      rows.push([
+        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+        isFirst ? instructorName : "",                     // B: Instructor
+        entry.notes ? `${entry.type} - ${entry.notes}` : entry.type, // C: Description
+        entry.type,                                        // D: Category
+        String(entry.hours),                               // E: Hours
+        "TRUE",                                            // F: Confirmed
+        rate > 0 ? `$${rate.toFixed(2)}` : "",             // G: Hourly rate
+        rate > 0 ? `=E${rowIdx}*G${rowIdx}` : "",          // H: Total
+        earnings,                                          // I: Instructor Earnings (flat: hours × rate)
+        "",                                                // J: Commissions
+        earnings ? `=I${rowIdx}` : "",                     // K: To Be Paid
+        entry.date,                                        // L: Date
+      ]);
+      rowIdx++;
     }
 
-    // 3. Mark everything as synced in Convex
-    await ctx.runMutation(internal.submissions.markSynced, { submissionId });
+    // Step 3: Overwrite the placeholder rows with the real data (with formulas)
+    const endRow = startRow + rows.length - 1;
+    await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
 
     console.log(
-      `Synced submission ${submissionId}: ` +
-        `${sessions.length} sessions, ${additionalEntries.length} additional entries`
+      `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
+      `at Payroll rows ${startRow}–${endRow} ` +
+      `(${sessions.length} sessions, ${additionalEntries.length} additional entries)`
     );
+
+    // Mark everything as synced in Convex
+    await ctx.runMutation(internal.submissions.markSynced, { submissionId });
   },
 });
