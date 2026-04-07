@@ -558,21 +558,22 @@ export default function Admin() {
                                         display: "flex",
                                         justifyContent: "space-between",
                                         alignItems: "center",
-                                        padding: "6px 10px",
+                                        padding: "7px 10px",
                                         background: C.white,
                                         borderRadius: 6,
                                         fontSize: 13,
+                                        gap: 12,
                                       }}
                                     >
-                                      <div>
-                                        <span style={{ fontWeight: 500, color: C.black }}>{appt.info}</span>
-                                        <span style={{ color: "#aaa", marginLeft: 8 }}>
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                                        <span style={{ fontWeight: 600, color: C.black }}>{appt.info}</span>
+                                        <span style={{ fontSize: 12, color: "#aaa" }}>
                                           {new Date(appt.datetime).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
                                           {" · "}
                                           {new Date(appt.datetime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                                         </span>
                                       </div>
-                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                                         {appt.quantity > 1 && (
                                           <span style={{ fontSize: 12, color: "#666" }}>{appt.quantity} students</span>
                                         )}
