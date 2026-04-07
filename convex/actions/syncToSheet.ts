@@ -85,6 +85,83 @@ async function appendRows(token: string, rows: string[][]): Promise<number> {
   return match ? parseInt(match[1]) : -1;
 }
 
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+
+async function getPayrollSheetId(token: string): Promise<number> {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}?fields=sheets.properties`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json() as { sheets: Array<{ properties: { sheetId: number; title: string } }> };
+  const sheet = data.sheets.find((s) => s.properties.title === PAYROLL_TAB);
+  return sheet?.properties.sheetId ?? 0;
+}
+
+async function formatBlock(token: string, sheetId: number, startRow: number, endRow: number) {
+  // Sheets API uses 0-based row indices; our startRow/endRow are 1-based
+  const s = startRow - 1; // inclusive start (0-based)
+  const e = endRow;       // exclusive end (0-based)
+
+  // Subtle sage-green background for the whole block
+  const bg = { red: 0.933, green: 0.953, blue: 0.933 }; // #EEF3EE
+
+  const requests = [
+    // Light background across all columns A–L
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: s, endRowIndex: e, startColumnIndex: 0, endColumnIndex: 12 },
+        cell: { userEnteredFormat: { backgroundColor: bg } },
+        fields: "userEnteredFormat.backgroundColor",
+      },
+    },
+    // Bold + slightly larger instructor name (column B, first row only)
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: s, endRowIndex: s + 1, startColumnIndex: 1, endColumnIndex: 2 },
+        cell: { userEnteredFormat: { textFormat: { bold: true, fontSize: 11 } } },
+        fields: "userEnteredFormat.textFormat",
+      },
+    },
+    // Bold pay period number (column A, first row)
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: s, endRowIndex: s + 1, startColumnIndex: 0, endColumnIndex: 1 },
+        cell: { userEnteredFormat: { textFormat: { bold: true } } },
+        fields: "userEnteredFormat.textFormat.bold",
+      },
+    },
+    // Bold the total in column K (first row)
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: s, endRowIndex: s + 1, startColumnIndex: 10, endColumnIndex: 11 },
+        cell: { userEnteredFormat: { textFormat: { bold: true } } },
+        fields: "userEnteredFormat.textFormat.bold",
+      },
+    },
+    // Thin grey bottom border to separate instructor blocks
+    {
+      updateBorders: {
+        range: { sheetId, startRowIndex: e - 1, endRowIndex: e, startColumnIndex: 0, endColumnIndex: 12 },
+        bottom: { style: "SOLID", width: 1, color: { red: 0.75, green: 0.75, blue: 0.75 } },
+      },
+    },
+  ];
+
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ requests }),
+    }
+  );
+  const json = await res.json();
+  if (!res.ok) console.error("formatBlock error:", JSON.stringify(json));
+}
+
 // ─── Read instructor config from sheet ───────────────────────────────────────
 
 interface InstructorConfig {
@@ -169,6 +246,9 @@ export const run = internalAction({
       return;
     }
 
+    // Fetch the Payroll tab's sheetId (needed for formatting requests)
+    const sheetId = await getPayrollSheetId(gToken);
+
     // Step 1: Append placeholder rows to learn which rows we get
     const placeholders = Array.from({ length: totalRows }, (_, i) => [
       i === 0 ? String(payPeriodNum) : "",
@@ -230,6 +310,9 @@ export const run = internalAction({
 
     // Step 3: Overwrite the placeholder rows with the real data (with formulas)
     await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
+
+    // Step 4: Apply formatting — background, bold name, bold total, bottom border
+    await formatBlock(gToken, sheetId, startRow, endRow);
 
     console.log(
       `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
