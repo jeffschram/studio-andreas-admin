@@ -145,6 +145,55 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/submission-status
+http.route({
+  path: "/api/submission-status",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// GET /api/submission-status?payPeriodNumber=3
+http.route({
+  path: "/api/submission-status",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const url = new URL(request.url);
+    const num = url.searchParams.get("payPeriodNumber");
+    if (!num) {
+      return new Response(JSON.stringify({ error: "payPeriodNumber required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const result = await ctx.runQuery(internal.submissions.getStatusesForPeriod, {
+      payPeriodNumber: parseInt(num),
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }),
+});
+
 // CORS preflight for /api/clear-all-data
 http.route({
   path: "/api/clear-all-data",

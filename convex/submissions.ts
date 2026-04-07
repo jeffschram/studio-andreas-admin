@@ -235,6 +235,48 @@ export const clearAll = internalMutation({
   },
 });
 
+// ─── Internal: submission statuses for a pay period (admin status view) ───────
+
+export const getStatusesForPeriod = internalQuery({
+  args: { payPeriodNumber: v.number() },
+  handler: async (ctx, { payPeriodNumber }) => {
+    const payPeriod = await ctx.db
+      .query("payPeriods")
+      .withIndex("by_number", (q) => q.eq("number", payPeriodNumber))
+      .unique();
+    if (!payPeriod) return [];
+
+    const submissions = await ctx.db
+      .query("submissions")
+      .withIndex("by_pay_period", (q) => q.eq("payPeriodId", payPeriod._id))
+      .collect();
+
+    return Promise.all(
+      submissions.map(async (sub) => {
+        const instructor = await ctx.db.get(sub.instructorId);
+        const sessions = await ctx.db
+          .query("sessions")
+          .withIndex("by_submission", (q) => q.eq("submissionId", sub._id))
+          .collect();
+        const additionalEntries = await ctx.db
+          .query("additionalEntries")
+          .withIndex("by_submission", (q) => q.eq("submissionId", sub._id))
+          .collect();
+        const totalRows = sessions.length + additionalEntries.length;
+        const syncedRows = sessions.filter((s) => s.syncedToSheet).length + additionalEntries.filter((e) => e.syncedToSheet).length;
+        const synced = sub.status === "submitted" && totalRows > 0 && syncedRows === totalRows;
+        return {
+          instructorName: instructor?.name ?? "Unknown",
+          status: sub.status as "pending" | "submitted",
+          submittedAt: sub.submittedAt,
+          synced,
+          token: sub.token,
+        };
+      })
+    );
+  },
+});
+
 export const markSynced = internalMutation({
   args: { submissionId: v.id("submissions") },
   handler: async (ctx, { submissionId }) => {

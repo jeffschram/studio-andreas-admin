@@ -51,6 +51,14 @@ type Submission = {
   skipReason?: string;
 };
 
+type SubmissionStatus = {
+  instructorName: string;
+  status: "pending" | "submitted";
+  submittedAt?: number;
+  synced: boolean;
+  token: string;
+};
+
 type SendResult = {
   dryRun: boolean;
   payPeriod: number;
@@ -94,6 +102,9 @@ export default function Admin() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set());
 
+  // Submission status state
+  const [statuses, setStatuses] = useState<SubmissionStatus[] | null>(null);
+
   // Fetch pay period data on login
   useEffect(() => {
     if (!authenticated) return;
@@ -113,6 +124,7 @@ export default function Admin() {
         setData(d);
         setSelectedPeriod(d.currentPeriodNumber);
         fetchPreview(d.currentPeriodNumber, adminSecret);
+        fetchStatuses(d.currentPeriodNumber, adminSecret);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -145,11 +157,25 @@ export default function Admin() {
       .finally(() => setPreviewLoading(false));
   };
 
+  const fetchStatuses = (num: number, secret: string) => {
+    setStatuses(null);
+    fetch(`${CONVEX_SITE_URL}/api/submission-status?payPeriodNumber=${num}`, {
+      headers: { Authorization: `Bearer ${secret}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        const d = await res.json() as SubmissionStatus[];
+        setStatuses(d);
+      })
+      .catch((err) => console.error("Status fetch failed:", err));
+  };
+
   const handlePeriodChange = (num: number) => {
     setSelectedPeriod(num);
     setSendResult(null);
     setSendError(null);
     fetchPreview(num, adminSecret);
+    fetchStatuses(num, adminSecret);
   };
 
   const handleClearData = async () => {
@@ -220,6 +246,8 @@ export default function Admin() {
 
       const result: SendResult = await res.json();
       setSendResult(result);
+      // Refresh submission statuses now that forms have been sent
+      if (activePeriod) fetchStatuses(activePeriod.periodNumber, adminSecret);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Network error");
     } finally {
@@ -500,6 +528,7 @@ export default function Admin() {
                       const isOpen = openAccordions.has(inst.name);
                       const instPreview = preview?.find((p) => p.name === inst.name);
                       const willSkip = instPreview?.willSkip ?? false;
+                      const instStatus = statuses?.find((s) => s.instructorName === inst.name);
                       return (
                         <div
                           key={i}
@@ -550,6 +579,23 @@ export default function Admin() {
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                               <span style={{ fontSize: 12, color: "#888" }}>{inst.email}</span>
+                              {instStatus && (() => {
+                                if (instStatus.synced) return (
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "#dcfce7", color: "#166534", whiteSpace: "nowrap" }}>
+                                    ✓ Synced
+                                  </span>
+                                );
+                                if (instStatus.status === "submitted") return (
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "#dbeafe", color: "#1d4ed8", whiteSpace: "nowrap" }}>
+                                    ✓ Submitted
+                                  </span>
+                                );
+                                return (
+                                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "#fef9c3", color: "#854d0e", whiteSpace: "nowrap" }}>
+                                    Sent
+                                  </span>
+                                );
+                              })()}
                               <span style={{ fontSize: 12, color: C.green, fontWeight: 700, transform: isOpen ? "rotate(180deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▾</span>
                             </div>
                           </button>
@@ -557,6 +603,12 @@ export default function Admin() {
                           {/* Accordion body */}
                           {isOpen && (
                             <div style={{ borderTop: `1px solid #eee`, padding: "8px 14px 12px" }}>
+                              {instStatus?.status === "submitted" && instStatus.submittedAt && (
+                                <p style={{ fontSize: 12, color: "#6b7280", margin: "4px 0 8px", fontStyle: "italic" }}>
+                                  Submitted {new Date(instStatus.submittedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                                  {instStatus.synced ? " · synced to sheet" : " · syncing…"}
+                                </p>
+                              )}
                               {!instPreview || instPreview.appointments.length === 0 ? (
                                 <p style={{ fontSize: 13, color: "#aaa", margin: "8px 0 0" }}>
                                   No appointments found for this period.
