@@ -180,6 +180,9 @@ export const run = internalAction({
     // Step 2: Build proper rows now that we know row numbers
     const rows: string[][] = [];
     let rowIdx = startRow;
+    const endRow = startRow + totalRows - 1;
+    // K column: SUM of all instructor earnings for this block, on the first row only
+    const kTotal = `=SUM(I${startRow}:I${endRow})`;
 
     for (const session of sessions) {
       const isFirst = rows.length === 0;
@@ -195,8 +198,8 @@ export const run = internalAction({
         grossFormula,                                      // H: Gross Total (=E*G)
         session.pricePerBooking > 0 ? earningsFormula(rowIdx) : "", // I: Instructor Earnings
         "",                                                // J: Commissions
-        session.pricePerBooking > 0 ? `=I${rowIdx}` : "", // K: To Be Paid
-        session.datetime.slice(0, 10),                     // L: Date
+        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+        "",                                                // L: (unused)
       ]);
       rowIdx++;
     }
@@ -216,14 +219,13 @@ export const run = internalAction({
         rate > 0 ? `=E${rowIdx}*G${rowIdx}` : "",          // H: Total
         earnings,                                          // I: Instructor Earnings (flat: hours × rate)
         "",                                                // J: Commissions
-        earnings ? `=I${rowIdx}` : "",                     // K: To Be Paid
-        entry.date,                                        // L: Date
+        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+        "",                                                // L: (unused)
       ]);
       rowIdx++;
     }
 
     // Step 3: Overwrite the placeholder rows with the real data (with formulas)
-    const endRow = startRow + rows.length - 1;
     await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
 
     console.log(
