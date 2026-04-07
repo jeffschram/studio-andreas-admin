@@ -121,11 +121,14 @@ async function getInstructorConfigs(token: string): Promise<Map<string, Instruct
 function earningsFormula(rowNum: number): string {
   const D = `D${rowNum}`;
   const H = `H${rowNum}`;
+  // Known categories with specific splits; everything else (Open Studio, Tech Hours,
+  // Party, Event Hours, Birthday Party, Additional Classtime Hours, Basic Hourly, etc.)
+  // pays the instructor the full gross amount (H).
   return (
     `=IF(TRIM(LOWER(${D}))="private",(${H}*0.97)*0.75,` +
     `IF(TRIM(LOWER(${D}))="class",(${H}*0.87)/2,` +
     `IF(TRIM(LOWER(${D}))="workshop",(${H}*0.87)/2,` +
-    `IF(TRIM(LOWER(${D}))="membership",(${H}*0.97)*0.1,""))))`
+    `IF(TRIM(LOWER(${D}))="membership",(${H}*0.97)*0.1,${H}))))`
   );
 }
 
