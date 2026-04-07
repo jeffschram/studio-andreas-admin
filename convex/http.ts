@@ -102,4 +102,45 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/clear-all-data
+http.route({
+  path: "/api/clear-all-data",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// POST /api/clear-all-data — DEV ONLY: wipe all Convex payroll data
+http.route({
+  path: "/api/clear-all-data",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const result = await ctx.runMutation(internal.submissions.clearAll, {});
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }),
+});
+
 export default http;

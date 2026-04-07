@@ -201,6 +201,40 @@ export const getForSync = internalQuery({
   },
 });
 
+// ─── DEV ONLY: wipe all payroll data for clean test runs ──────────────────────
+
+export const clearAll = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const [submissions, sessions, additionalEntries, payPeriods, instructors] =
+      await Promise.all([
+        ctx.db.query("submissions").collect(),
+        ctx.db.query("sessions").collect(),
+        ctx.db.query("additionalEntries").collect(),
+        ctx.db.query("payPeriods").collect(),
+        ctx.db.query("instructors").collect(),
+      ]);
+
+    await Promise.all([
+      ...submissions.map((r) => ctx.db.delete(r._id)),
+      ...sessions.map((r) => ctx.db.delete(r._id)),
+      ...additionalEntries.map((r) => ctx.db.delete(r._id)),
+      ...payPeriods.map((r) => ctx.db.delete(r._id)),
+      ...instructors.map((r) => ctx.db.delete(r._id)),
+    ]);
+
+    return {
+      cleared: {
+        submissions: submissions.length,
+        sessions: sessions.length,
+        additionalEntries: additionalEntries.length,
+        payPeriods: payPeriods.length,
+        instructors: instructors.length,
+      },
+    };
+  },
+});
+
 export const markSynced = internalMutation({
   args: { submissionId: v.id("submissions") },
   handler: async (ctx, { submissionId }) => {

@@ -68,6 +68,8 @@ export default function Admin() {
   const [sendResult, setSendResult] = useState<SendResult | null>(null);
   const [useTestEmail, setUseTestEmail] = useState(false);
   const [testEmail, setTestEmail] = useState("");
+  const [clearing, setClearing] = useState(false);
+  const [clearResult, setClearResult] = useState<string | null>(null);
 
   // Fetch pay period data on login
   useEffect(() => {
@@ -107,6 +109,35 @@ export default function Admin() {
     setSelectedPeriod(num);
     setSendResult(null);
     setSendError(null);
+  };
+
+  const handleClearData = async () => {
+    const ok = window.confirm(
+      "⚠️ This will permanently delete ALL submissions, sessions, additional entries, pay periods, and instructors from the database.\n\nThis cannot be undone. Continue?"
+    );
+    if (!ok) return;
+
+    setClearing(true);
+    setClearResult(null);
+    try {
+      const res = await fetch(`${CONVEX_SITE_URL}/api/clear-all-data`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminSecret}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const result = await res.json() as { cleared: Record<string, number> };
+      const counts = Object.entries(result.cleared)
+        .map(([k, v]) => `${v} ${k}`)
+        .join(", ");
+      setClearResult(`Cleared: ${counts}`);
+      setData(null);
+      setSelectedPeriod(null);
+      setSendResult(null);
+    } catch (err) {
+      setClearResult(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setClearing(false);
+    }
   };
 
   const handleSend = async () => {
@@ -653,6 +684,48 @@ export default function Admin() {
             )}
           </>
         )}
+        {/* DEV ONLY: Clear all data */}
+        <div
+          style={{
+            marginTop: 48,
+            paddingTop: 32,
+            borderTop: "1px solid #e5e7eb",
+          }}
+        >
+          <p
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              color: "#9ca3af",
+              marginBottom: 12,
+            }}
+          >
+            Testing Only
+          </p>
+          <button
+            onClick={handleClearData}
+            disabled={clearing}
+            style={{
+              padding: "10px 20px",
+              borderRadius: 8,
+              background: "transparent",
+              color: "#dc2626",
+              fontSize: 13,
+              fontWeight: 600,
+              border: "1px solid #fca5a5",
+              cursor: clearing ? "wait" : "pointer",
+            }}
+          >
+            {clearing ? "Clearing..." : "Clear All Convex Data"}
+          </button>
+          {clearResult && (
+            <p style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>
+              {clearResult}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
