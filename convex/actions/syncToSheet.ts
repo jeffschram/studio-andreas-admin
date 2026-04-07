@@ -97,13 +97,30 @@ async function getPayrollSheetId(token: string): Promise<number> {
   return sheet?.properties.sheetId ?? 0;
 }
 
-async function formatBlock(token: string, sheetId: number, startRow: number, endRow: number) {
+// Palette of soft pastel backgrounds — one per instructor, consistent across pay periods
+const INSTRUCTOR_COLORS = [
+  { red: 0.929, green: 0.953, blue: 0.929 }, // sage green   #EDF3ED
+  { red: 0.929, green: 0.941, blue: 0.961 }, // periwinkle   #EDF0F5
+  { red: 0.961, green: 0.937, blue: 0.961 }, // lavender     #F5EFF5
+  { red: 0.969, green: 0.945, blue: 0.929 }, // peach        #F7F1ED
+  { red: 0.961, green: 0.961, blue: 0.929 }, // butter       #F5F5ED
+  { red: 0.929, green: 0.961, blue: 0.957 }, // mint         #EDF5F4
+  { red: 0.961, green: 0.929, blue: 0.937 }, // blush rose   #F5EDF0
+  { red: 0.945, green: 0.929, blue: 0.961 }, // lilac        #F1EDF5
+];
+
+function instructorColorIndex(name: string): number {
+  let hash = 0;
+  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) % INSTRUCTOR_COLORS.length;
+  return hash;
+}
+
+async function formatBlock(token: string, sheetId: number, startRow: number, endRow: number, instructorName: string) {
   // Sheets API uses 0-based row indices; our startRow/endRow are 1-based
   const s = startRow - 1; // inclusive start (0-based)
   const e = endRow;       // exclusive end (0-based)
 
-  // Subtle sage-green background for the whole block
-  const bg = { red: 0.933, green: 0.953, blue: 0.933 }; // #EEF3EE
+  const bg = INSTRUCTOR_COLORS[instructorColorIndex(instructorName)];
 
   const requests = [
     // Light background across all columns A–L
@@ -312,7 +329,7 @@ export const run = internalAction({
     await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
 
     // Step 4: Apply formatting — background, bold name, bold total, bottom border
-    await formatBlock(gToken, sheetId, startRow, endRow);
+    await formatBlock(gToken, sheetId, startRow, endRow, instructorName);
 
     console.log(
       `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
