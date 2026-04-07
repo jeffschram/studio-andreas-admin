@@ -97,6 +97,18 @@ async function getPayrollSheetId(token: string): Promise<number> {
   return sheet?.properties.sheetId ?? 0;
 }
 
+// Parse a hex color string like "#EDF3ED" or "EDF3ED" to RGB fractions
+function hexToRgb(hex: string): { red: number; green: number; blue: number } | null {
+  const m = hex.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return {
+    red: ((n >> 16) & 0xff) / 255,
+    green: ((n >> 8) & 0xff) / 255,
+    blue: (n & 0xff) / 255,
+  };
+}
+
 // Palette of soft pastel backgrounds — one per instructor, consistent across pay periods
 const INSTRUCTOR_COLORS = [
   { red: 0.929, green: 0.953, blue: 0.929 }, // sage green   #EDF3ED
@@ -115,12 +127,13 @@ function instructorColorIndex(name: string): number {
   return hash;
 }
 
-async function formatBlock(token: string, sheetId: number, startRow: number, endRow: number, instructorName: string) {
+async function formatBlock(token: string, sheetId: number, startRow: number, endRow: number, instructorName: string, sheetColor?: string) {
   // Sheets API uses 0-based row indices; our startRow/endRow are 1-based
   const s = startRow - 1; // inclusive start (0-based)
   const e = endRow;       // exclusive end (0-based)
 
-  const bg = INSTRUCTOR_COLORS[instructorColorIndex(instructorName)];
+  const parsedColor = sheetColor ? hexToRgb(sheetColor) : null;
+  const bg = parsedColor ?? INSTRUCTOR_COLORS[instructorColorIndex(instructorName)];
 
   const requests = [
     // Light background across all columns A–L
@@ -184,11 +197,13 @@ async function formatBlock(token: string, sheetId: number, startRow: number, end
 interface InstructorConfig {
   name: string;
   includeInPayroll: boolean;
+  sheetColor?: string; // hex color e.g. "#EDF3ED"
 }
 
 async function getInstructorConfigs(token: string): Promise<Map<string, InstructorConfig>> {
+  // Read through column N (index 13) to include the optional sheet color
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent("Instructors!A2:E20")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent("Instructors!A2:N20")}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   const data = await res.json() as { values?: string[][] };
@@ -199,6 +214,7 @@ async function getInstructorConfigs(token: string): Promise<Map<string, Instruct
     map.set(name, {
       name,
       includeInPayroll: includeInPayroll?.toLowerCase() === "yes",
+      sheetColor: row[13]?.trim() || undefined, // column N
     });
   }
   return map;
@@ -329,7 +345,7 @@ export const run = internalAction({
     await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
 
     // Step 4: Apply formatting — background, bold name, bold total, bottom border
-    await formatBlock(gToken, sheetId, startRow, endRow, instructorName);
+    await formatBlock(gToken, sheetId, startRow, endRow, instructorName, instructorConfig?.sheetColor);
 
     console.log(
       `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
