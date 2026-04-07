@@ -527,16 +527,45 @@ export const previewPeriodInternal = internalAction({
       byCalendar.set(appt.calendarID, list);
     }
 
-    // Build per-instructor appointment summaries
-    const instructors = activeInstructors.map((row) => {
+    // Fetch appointment types to identify series
+    const apptTypesRaw = await acuityFetch("/appointment-types");
+    const apptTypeMap = new Map<number, { name: string; acuityType: string; classSize: number; price: number }>();
+    if (Array.isArray(apptTypesRaw)) {
+      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; classSize: number | null; price: string }>) {
+        apptTypeMap.set(t.id, {
+          name: t.name,
+          acuityType: t.type,
+          classSize: t.classSize ?? 1,
+          price: parseFloat(t.price) || 0,
+        });
+      }
+    }
+
+    // Build per-instructor appointment summaries (same series logic as sendForms)
+    const instructors = await Promise.all(activeInstructors.map(async (row) => {
       const calId = parseInt(row[3]);
       const appts = byCalendar.get(calId) ?? [];
 
-      // Group class-style appointments by type+timeslot; privates individually
-      const grouped: { info: string; category: string; datetime: string; quantity: number }[] = [];
-      const groupMap = new Map<string, AcuityAppt[]>();
+      type PreviewAppt = { info: string; category: string; datetime: string; quantity: number };
+      const grouped: PreviewAppt[] = [];
 
+      // Separate series from non-series
+      const seriesByType = new Map<number, AcuityAppt[]>();
+      const nonSeriesAppts: AcuityAppt[] = [];
       for (const a of appts) {
+        const typeInfo = apptTypeMap.get(a.appointmentTypeID);
+        if (typeInfo?.acuityType === "series") {
+          const list = seriesByType.get(a.appointmentTypeID) ?? [];
+          list.push(a);
+          seriesByType.set(a.appointmentTypeID, list);
+        } else {
+          nonSeriesAppts.push(a);
+        }
+      }
+
+      // Non-series: privates individually, others grouped by type+timeslot
+      const groupMap = new Map<string, AcuityAppt[]>();
+      for (const a of nonSeriesAppts) {
         const cat = getCategory(a.type);
         if (cat === "Private") {
           grouped.push({
@@ -560,10 +589,45 @@ export const previewPeriodInternal = internalAction({
           quantity: group.length,
         });
       }
-      grouped.sort((a, b) => a.datetime.localeCompare(b.datetime));
 
+      // Series: detect start/end — same parallel Acuity calls as sendForms
+      if (seriesByType.size > 0) {
+        const seriesChecks = await Promise.all(
+          Array.from(seriesByType.entries()).map(async ([typeId, typeAppts]) => {
+            const sorted = [...typeAppts].sort((a, b) => a.datetime.localeCompare(b.datetime));
+            const firstDate = sorted[0].datetime.slice(0, 10);
+            const lastDate = sorted[sorted.length - 1].datetime.slice(0, 10);
+            const typeInfo = apptTypeMap.get(typeId);
+
+            const [beforeRaw, afterRaw] = await Promise.all([
+              acuityFetch(`/appointments?appointmentTypeID=${typeId}&calendarID=${calId}&maxDate=${addDays(firstDate, -1)}&max=1`),
+              acuityFetch(`/appointments?appointmentTypeID=${typeId}&calendarID=${calId}&minDate=${addDays(lastDate, 1)}&max=1`),
+            ]);
+
+            const isStart = Array.isArray(beforeRaw) && beforeRaw.length === 0;
+            const isEnd = Array.isArray(afterRaw) && afterRaw.length === 0;
+            return { typeInfo, sorted, isStart, isEnd };
+          })
+        );
+
+        for (const { typeInfo, sorted, isStart, isEnd } of seriesChecks) {
+          if (!isStart && !isEnd) continue; // middle of series — skip
+          const typeName = typeInfo?.name ?? sorted[0].type;
+          const classSize = (typeInfo?.classSize ?? 0) > 0 ? typeInfo!.classSize : sorted.length;
+          const category = getCategory(typeName);
+
+          if (isStart) {
+            grouped.push({ info: `${shorten(typeName)} (Start)`, category, datetime: sorted[0].datetime, quantity: classSize });
+          }
+          if (isEnd) {
+            grouped.push({ info: `${shorten(typeName)} (End)`, category, datetime: sorted[sorted.length - 1].datetime, quantity: classSize });
+          }
+        }
+      }
+
+      grouped.sort((a, b) => a.datetime.localeCompare(b.datetime));
       return { name: row[0], email: row[1], calendarId: calId, appointments: grouped };
-    });
+    }));
 
     return { payPeriod: resolvedPeriodNumber, startDate, endDate, instructors };
   },
