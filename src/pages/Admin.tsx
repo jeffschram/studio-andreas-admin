@@ -12,6 +12,20 @@ const C = {
 
 const CONVEX_SITE_URL = import.meta.env.VITE_CONVEX_SITE_URL as string;
 
+type Appointment = {
+  info: string;
+  category: string;
+  datetime: string;
+  quantity: number;
+};
+
+type InstructorPreview = {
+  name: string;
+  email: string;
+  calendarId: number;
+  appointments: Appointment[];
+};
+
 type Instructor = { name: string; email: string };
 
 type Period = {
@@ -71,6 +85,11 @@ export default function Admin() {
   const [clearing, setClearing] = useState(false);
   const [clearResult, setClearResult] = useState<string | null>(null);
 
+  // Accordion preview state
+  const [preview, setPreview] = useState<InstructorPreview[] | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set());
+
   // Fetch pay period data on login
   useEffect(() => {
     if (!authenticated) return;
@@ -89,6 +108,7 @@ export default function Admin() {
         const d: PayPeriodData = await res.json();
         setData(d);
         setSelectedPeriod(d.currentPeriodNumber);
+        fetchPreview(d.currentPeriodNumber, adminSecret);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -105,10 +125,27 @@ export default function Admin() {
     setAuthenticated(true);
   };
 
+  const fetchPreview = (num: number, secret: string) => {
+    setPreviewLoading(true);
+    setPreview(null);
+    setOpenAccordions(new Set());
+    fetch(`${CONVEX_SITE_URL}/api/period-preview?payPeriodNumber=${num}`, {
+      headers: { Authorization: `Bearer ${secret}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text());
+        const d = await res.json() as { instructors: InstructorPreview[] };
+        setPreview(d.instructors);
+      })
+      .catch((err) => console.error("Preview fetch failed:", err))
+      .finally(() => setPreviewLoading(false));
+  };
+
   const handlePeriodChange = (num: number) => {
     setSelectedPeriod(num);
     setSendResult(null);
     setSendError(null);
+    fetchPreview(num, adminSecret);
   };
 
   const handleClearData = async () => {
@@ -435,43 +472,130 @@ export default function Admin() {
                     )}
                   </div>
 
-                  <h3
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: C.green,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                      margin: "0 0 12px",
-                    }}
-                  >
-                    {data.instructors.length} Instructor
-                    {data.instructors.length !== 1 ? "s" : ""}
-                  </h3>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                    <h3
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        color: C.green,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        margin: 0,
+                      }}
+                    >
+                      {data.instructors.length} Instructor
+                      {data.instructors.length !== 1 ? "s" : ""}
+                    </h3>
+                    {previewLoading && (
+                      <span style={{ fontSize: 12, color: "#aaa" }}>Loading appointments…</span>
+                    )}
+                  </div>
 
-                  <div
-                    style={{ display: "flex", flexDirection: "column", gap: 8 }}
-                  >
-                    {data.instructors.map((inst, i) => (
-                      <div
-                        key={i}
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          padding: "8px 14px",
-                          background: C.offwhite,
-                          borderRadius: 8,
-                        }}
-                      >
-                        <span style={{ fontSize: 14, fontWeight: 600 }}>
-                          {inst.name}
-                        </span>
-                        <span style={{ fontSize: 12, color: "#888" }}>
-                          {inst.email}
-                        </span>
-                      </div>
-                    ))}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {data.instructors.map((inst, i) => {
+                      const isOpen = openAccordions.has(inst.name);
+                      const instPreview = preview?.find((p) => p.name === inst.name);
+                      return (
+                        <div
+                          key={i}
+                          style={{
+                            background: C.offwhite,
+                            borderRadius: 8,
+                            overflow: "hidden",
+                            border: isOpen ? `1px solid ${C.green}30` : "1px solid transparent",
+                          }}
+                        >
+                          {/* Accordion header */}
+                          <button
+                            onClick={() =>
+                              setOpenAccordions((prev) => {
+                                const next = new Set(prev);
+                                next.has(inst.name) ? next.delete(inst.name) : next.add(inst.name);
+                                return next;
+                              })
+                            }
+                            style={{
+                              width: "100%",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              padding: "10px 14px",
+                              background: "none",
+                              border: "none",
+                              cursor: "pointer",
+                              textAlign: "left",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: C.black }}>
+                                {inst.name}
+                              </span>
+                              {instPreview && (
+                                <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>
+                                  {instPreview.appointments.length} appointment{instPreview.appointments.length !== 1 ? "s" : ""}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                              <span style={{ fontSize: 12, color: "#888" }}>{inst.email}</span>
+                              <span style={{ fontSize: 12, color: C.green, fontWeight: 700, transform: isOpen ? "rotate(180deg)" : "none", display: "inline-block", transition: "transform 0.15s" }}>▾</span>
+                            </div>
+                          </button>
+
+                          {/* Accordion body */}
+                          {isOpen && (
+                            <div style={{ borderTop: `1px solid #eee`, padding: "8px 14px 12px" }}>
+                              {!instPreview || instPreview.appointments.length === 0 ? (
+                                <p style={{ fontSize: 13, color: "#aaa", margin: "8px 0 0" }}>
+                                  No appointments found for this period.
+                                </p>
+                              ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                                  {instPreview.appointments.map((appt, j) => (
+                                    <div
+                                      key={j}
+                                      style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        padding: "6px 10px",
+                                        background: C.white,
+                                        borderRadius: 6,
+                                        fontSize: 13,
+                                      }}
+                                    >
+                                      <div>
+                                        <span style={{ fontWeight: 500, color: C.black }}>{appt.info}</span>
+                                        <span style={{ color: "#aaa", marginLeft: 8 }}>
+                                          {new Date(appt.datetime).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                                          {" · "}
+                                          {new Date(appt.datetime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                                        </span>
+                                      </div>
+                                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                        {appt.quantity > 1 && (
+                                          <span style={{ fontSize: 12, color: "#666" }}>{appt.quantity} students</span>
+                                        )}
+                                        <span style={{
+                                          fontSize: 11,
+                                          fontWeight: 600,
+                                          padding: "2px 8px",
+                                          borderRadius: 10,
+                                          background: appt.category === "Private" ? "#ede9fe" : appt.category === "Class" ? "#dcfce7" : "#fef9c3",
+                                          color: appt.category === "Private" ? "#6d28d9" : appt.category === "Class" ? "#166534" : "#854d0e",
+                                        }}>
+                                          {appt.category}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 

@@ -458,3 +458,113 @@ export const getPayPeriodInfoInternal = internalAction({
   args: {},
   handler: payPeriodInfoHandler,
 });
+
+// ─── Period preview (appointments per instructor, no series detection) ────────
+
+export const previewPeriodInternal = internalAction({
+  args: { payPeriodNumber: v.optional(v.number()) },
+  handler: async (_ctx, args) => {
+    const gToken = await getGoogleAccessToken();
+
+    // Resolve period dates
+    const periodRows = await readRange(gToken, "Pay Periods!A2:D27");
+    let periodRow: string[];
+    let resolvedPeriodNumber: number;
+
+    if (args.payPeriodNumber != null) {
+      const found = periodRows.find((r) => parseInt(r[0]) === args.payPeriodNumber);
+      if (!found) throw new Error(`Pay Period ${args.payPeriodNumber} not found`);
+      periodRow = found;
+      resolvedPeriodNumber = args.payPeriodNumber;
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      const started = periodRows
+        .filter((r) => r[0] && r[1] && r[2] && toIsoDate(r[1]) <= today)
+        .sort((a, b) => toIsoDate(b[1]).localeCompare(toIsoDate(a[1])));
+      if (started.length === 0) throw new Error("No active pay periods found");
+      periodRow = started[0];
+      resolvedPeriodNumber = parseInt(periodRow[0]);
+    }
+
+    const startDate = toIsoDate(periodRow[1]);
+    const endDate = toIsoDate(periodRow[2]);
+
+    // Load active instructors
+    const [, ...instructorRows] = await readRange(gToken, "Instructors!A1:M20");
+    const activeInstructors = instructorRows.filter((r) => r[0] && r[4]?.toLowerCase() === "yes");
+    const calendarMap = new Map<number, string[]>();
+    for (const row of activeInstructors) {
+      const calId = parseInt(row[3]);
+      if (calId) calendarMap.set(calId, row);
+    }
+
+    // Fetch appointments from Acuity
+    const acuityResponse = await acuityFetch(
+      `/appointments?minDate=${startDate}&maxDate=${endDate}&max=500`
+    );
+    if (!Array.isArray(acuityResponse)) {
+      throw new Error(`Acuity API error: ${JSON.stringify(acuityResponse)}`);
+    }
+
+    type AcuityAppt = {
+      calendarID: number;
+      appointmentTypeID: number;
+      datetime: string;
+      type: string;
+      price: string;
+      firstName: string;
+      lastName: string;
+    };
+    const appointments = acuityResponse as AcuityAppt[];
+
+    // Group by instructor calendar
+    const byCalendar = new Map<number, AcuityAppt[]>();
+    for (const appt of appointments) {
+      if (!inPeriod(appt.datetime, startDate, endDate)) continue;
+      if (!calendarMap.has(appt.calendarID)) continue;
+      const list = byCalendar.get(appt.calendarID) ?? [];
+      list.push(appt);
+      byCalendar.set(appt.calendarID, list);
+    }
+
+    // Build per-instructor appointment summaries
+    const instructors = activeInstructors.map((row) => {
+      const calId = parseInt(row[3]);
+      const appts = byCalendar.get(calId) ?? [];
+
+      // Group class-style appointments by type+timeslot; privates individually
+      const grouped: { info: string; category: string; datetime: string; quantity: number }[] = [];
+      const groupMap = new Map<string, AcuityAppt[]>();
+
+      for (const a of appts) {
+        const cat = getCategory(a.type);
+        if (cat === "Private") {
+          grouped.push({
+            info: `${a.firstName} ${a.lastName}`.trim(),
+            category: "Private",
+            datetime: a.datetime,
+            quantity: 1,
+          });
+        } else {
+          const key = `${a.appointmentTypeID}|${a.datetime.slice(0, 16)}`;
+          const group = groupMap.get(key) ?? [];
+          group.push(a);
+          groupMap.set(key, group);
+        }
+      }
+      for (const group of groupMap.values()) {
+        grouped.push({
+          info: shorten(group[0].type),
+          category: getCategory(group[0].type),
+          datetime: group[0].datetime,
+          quantity: group.length,
+        });
+      }
+      grouped.sort((a, b) => a.datetime.localeCompare(b.datetime));
+
+      return { name: row[0], email: row[1], calendarId: calId, appointments: grouped };
+    });
+
+    return { payPeriod: resolvedPeriodNumber, startDate, endDate, instructors };
+  },
+});

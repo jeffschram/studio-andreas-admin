@@ -102,6 +102,49 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/period-preview
+http.route({
+  path: "/api/period-preview",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// GET /api/period-preview?payPeriodNumber=3
+// Returns appointments per instructor for admin preview (no series detection)
+http.route({
+  path: "/api/period-preview",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const url = new URL(request.url);
+    const num = url.searchParams.get("payPeriodNumber");
+    const result = await ctx.runAction(internal.actions.sendForms.previewPeriodInternal, {
+      payPeriodNumber: num ? parseInt(num) : undefined,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }),
+});
+
 // CORS preflight for /api/clear-all-data
 http.route({
   path: "/api/clear-all-data",
