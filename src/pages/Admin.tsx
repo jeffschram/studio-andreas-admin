@@ -24,6 +24,8 @@ type InstructorPreview = {
   email: string;
   calendarId: number;
   appointments: Appointment[];
+  hasRates: boolean;
+  willSkip: boolean;
 };
 
 type Instructor = { name: string; email: string };
@@ -45,6 +47,8 @@ type Submission = {
   instructor: string;
   email: string;
   link: string;
+  skipped?: boolean;
+  skipReason?: string;
 };
 
 type SendResult = {
@@ -495,14 +499,16 @@ export default function Admin() {
                     {data.instructors.map((inst, i) => {
                       const isOpen = openAccordions.has(inst.name);
                       const instPreview = preview?.find((p) => p.name === inst.name);
+                      const willSkip = instPreview?.willSkip ?? false;
                       return (
                         <div
                           key={i}
                           style={{
-                            background: C.offwhite,
+                            background: willSkip ? "#f9fafb" : C.offwhite,
                             borderRadius: 8,
                             overflow: "hidden",
-                            border: isOpen ? `1px solid ${C.green}30` : "1px solid transparent",
+                            border: isOpen ? `1px solid ${C.green}30` : willSkip ? "1px solid #e5e7eb" : "1px solid transparent",
+                            opacity: willSkip ? 0.7 : 1,
                           }}
                         >
                           {/* Accordion header */}
@@ -527,12 +533,18 @@ export default function Admin() {
                             }}
                           >
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <span style={{ fontSize: 14, fontWeight: 600, color: C.black }}>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: willSkip ? "#9ca3af" : C.black }}>
                                 {inst.name}
                               </span>
-                              {instPreview && (
+                              {instPreview && !willSkip && (
                                 <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>
                                   {instPreview.appointments.length} appointment{instPreview.appointments.length !== 1 ? "s" : ""}
+                                  {instPreview.hasRates && instPreview.appointments.length === 0 ? " · has additional rates" : ""}
+                                </span>
+                              )}
+                              {willSkip && (
+                                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600, background: "#fef3c7", padding: "2px 8px", borderRadius: 10 }}>
+                                  No email — no appointments or rates
                                 </span>
                               )}
                             </div>
@@ -744,8 +756,8 @@ export default function Admin() {
                   {formatDate(sendResult.dateRange.split(" → ")[1], true)}
                   <br />
                   <span style={{ fontSize: 13, color: "#888" }}>
-                    {sendResult.submissions.length} instructor
-                    {sendResult.submissions.length !== 1 ? "s" : ""} emailed
+                    {sendResult.submissions.filter(s => !s.skipped).length} emailed
+                    {sendResult.submissions.some(s => s.skipped) && ` · ${sendResult.submissions.filter(s => s.skipped).length} skipped`}
                   </span>
                 </p>
 
@@ -760,31 +772,33 @@ export default function Admin() {
                         justifyContent: "space-between",
                         alignItems: "center",
                         padding: "10px 14px",
-                        background: C.offwhite,
+                        background: sub.skipped ? "#f9fafb" : C.offwhite,
                         borderRadius: 8,
+                        opacity: sub.skipped ? 0.7 : 1,
                       }}
                     >
                       <div>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: sub.skipped ? "#9ca3af" : C.black }}>
                           {sub.instructor}
                         </div>
                         <div style={{ fontSize: 12, color: "#888" }}>
-                          {sub.email}
+                          {sub.skipped ? sub.skipReason : sub.email}
                         </div>
                       </div>
-                      <a
-                        href={sub.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{
-                          fontSize: 12,
-                          color: C.green,
-                          fontWeight: 600,
-                          textDecoration: "none",
-                        }}
-                      >
-                        View form →
-                      </a>
+                      {sub.skipped ? (
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#f59e0b", background: "#fef3c7", padding: "2px 8px", borderRadius: 10 }}>
+                          Skipped
+                        </span>
+                      ) : (
+                        <a
+                          href={sub.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontSize: 12, color: C.green, fontWeight: 600, textDecoration: "none" }}
+                        >
+                          View form →
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>

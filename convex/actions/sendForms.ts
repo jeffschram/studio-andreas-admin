@@ -210,7 +210,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       byCalendar.set(appt.calendarID, list);
     }
 
-    const results: { instructor: string; email: string; link: string }[] = [];
+    const results: { instructor: string; email: string; link: string; skipped?: boolean; skipReason?: string }[] = [];
 
     type SessionData = {
       datetime: string;
@@ -221,9 +221,11 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       eventType: "start" | "end" | "session";
     };
 
-    for (const [calId, appts] of byCalendar) {
-      const instructorRow = calendarMap.get(calId)!;
+    // Iterate ALL active instructors — not just those with appointments
+    for (const instructorRow of activeInstructors) {
+      const calId = parseInt(instructorRow[3]);
       const [name, email] = instructorRow;
+      const appts = byCalendar.get(calId) ?? [];
 
       // Separate series (multi-session classes) from non-series appointments
       const seriesByType = new Map<number, typeof appts>();
@@ -336,6 +338,18 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
       const sessions = allSessions.sort((a, b) => a.datetime.localeCompare(b.datetime));
 
+      // Build available rates for this instructor
+      const availableRates = rateHeaders
+        .map((label, i) => ({ label, rate: parseFloat(instructorRow[5 + i] ?? "") || 0 }))
+        .filter((r) => r.rate > 0);
+
+      // Skip if no appointments this period AND no additional rate types defined
+      if (sessions.length === 0 && availableRates.length === 0) {
+        console.log(`Skipping ${name} — no appointments and no additional rates`);
+        results.push({ instructor: name, email, link: "", skipped: true, skipReason: "No appointments · No additional rates" });
+        continue;
+      }
+
       // 6. Create Convex submission record
       const token = crypto.randomUUID();
 
@@ -353,10 +367,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
           acuityCalendarId: calId,
         }),
         token,
-        // Build per-instructor available rates from sheet columns F+ (index 5+)
-        availableRates: rateHeaders
-          .map((label, i) => ({ label, rate: parseFloat(instructorRow[5 + i] ?? "") || 0 }))
-          .filter((r) => r.rate > 0),
+        availableRates,
         sessions: sessions.map((s) => ({
           datetime: s.datetime,
           info: s.info,
@@ -541,10 +552,15 @@ export const previewPeriodInternal = internalAction({
       }
     }
 
+    // Load rate headers (to determine which instructors have additional rate types)
+    const [rateHeaderRowPreview] = await readRange(gToken, "Instructors!A1:M1");
+    const rateHeadersPreview = (rateHeaderRowPreview ?? []).slice(5);
+
     // Build per-instructor appointment summaries (same series logic as sendForms)
     const instructors = await Promise.all(activeInstructors.map(async (row) => {
       const calId = parseInt(row[3]);
       const appts = byCalendar.get(calId) ?? [];
+      const hasRates = rateHeadersPreview.some((_, i) => parseFloat(row[5 + i] ?? "") > 0);
 
       type PreviewAppt = { info: string; category: string; datetime: string; quantity: number };
       const grouped: PreviewAppt[] = [];
@@ -626,7 +642,8 @@ export const previewPeriodInternal = internalAction({
       }
 
       grouped.sort((a, b) => a.datetime.localeCompare(b.datetime));
-      return { name: row[0], email: row[1], calendarId: calId, appointments: grouped };
+      const willSkip = grouped.length === 0 && !hasRates;
+      return { name: row[0], email: row[1], calendarId: calId, appointments: grouped, hasRates, willSkip };
     }));
 
     return { payPeriod: resolvedPeriodNumber, startDate, endDate, instructors };
