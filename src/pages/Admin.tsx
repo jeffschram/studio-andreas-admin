@@ -572,7 +572,7 @@ export default function Admin() {
                                 </span>
                               )}
                               {willSkip && (
-                                <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600, background: "#fef3c7", padding: "2px 8px", borderRadius: 10 }}>
+                                <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>
                                   No email — no appointments or rates
                                 </span>
                               )}
