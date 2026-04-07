@@ -192,6 +192,59 @@ async function formatBlock(token: string, sheetId: number, startRow: number, end
   if (!res.ok) console.error("formatBlock error:", JSON.stringify(json));
 }
 
+// ─── Pay-period separator ─────────────────────────────────────────────────────
+
+// Reads column A in the rows above startRow (up to 40 rows back) to find the
+// most recent pay-period number. If it differs from the current payPeriodNum,
+// we're the first instructor of a new pay period and need a bold black top border.
+async function addPayPeriodSeparatorIfNeeded(
+  token: string,
+  sheetId: number,
+  startRow: number,
+  payPeriodNum: number
+) {
+  if (startRow <= 2) return; // Nothing above the header row
+
+  const lookback = Math.max(2, startRow - 40);
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(`${PAYROLL_TAB}!A${lookback}:A${startRow - 1}`)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const data = await res.json() as { values?: string[][] };
+  const rows = data.values ?? [];
+
+  // Walk backwards to find the last non-empty cell in column A
+  let lastPeriodNum: string | null = null;
+  for (const row of rows) {
+    if (row[0]?.trim()) lastPeriodNum = row[0].trim();
+  }
+
+  // Only draw the separator when the pay period above is different from ours
+  if (lastPeriodNum !== null && lastPeriodNum !== String(payPeriodNum)) {
+    const s = startRow - 1; // 0-based row index
+    const borderRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}:batchUpdate`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requests: [
+            {
+              updateBorders: {
+                range: { sheetId, startRowIndex: s, endRowIndex: s + 1, startColumnIndex: 0, endColumnIndex: 12 },
+                top: { style: "SOLID_MEDIUM", width: 2, color: { red: 0, green: 0, blue: 0 } },
+              },
+            },
+          ],
+        }),
+      }
+    );
+    const json = await borderRes.json();
+    if (!borderRes.ok) console.error("addPayPeriodSeparator error:", JSON.stringify(json));
+    else console.log(`Pay-period separator drawn before row ${startRow} (PP ${lastPeriodNum} → PP ${payPeriodNum})`);
+  }
+}
+
 // ─── Read instructor config from sheet ───────────────────────────────────────
 
 interface InstructorConfig {
@@ -346,6 +399,9 @@ export const run = internalAction({
 
     // Step 4: Apply formatting — background, bold name, bold total, bottom border
     await formatBlock(gToken, sheetId, startRow, endRow, instructorName, instructorConfig?.sheetColor);
+
+    // Step 5: Draw a bold black top border if this is the first instructor of a new pay period
+    await addPayPeriodSeparatorIfNeeded(gToken, sheetId, startRow, payPeriodNum);
 
     console.log(
       `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
