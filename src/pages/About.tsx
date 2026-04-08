@@ -22,7 +22,7 @@ export default function About() {
             Payroll System Admin Guide
           </h1>
           <p style={{ marginTop: 12, fontSize: 16, color: "#555", lineHeight: 1.6 }}>
-            Complete reference for managing instructor payroll via Acuity Scheduling, Google Sheets, and Claude Desktop.
+            Complete reference for managing instructor payroll via Acuity Scheduling, Google Sheets, and this app.
           </p>
         </div>
 
@@ -37,7 +37,7 @@ export default function About() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
             {[
               { label: "Acuity Scheduling", desc: "Source of truth for instructor sessions and class data" },
-              { label: "Claude Desktop", desc: "Automated engine: detects pay period, sends forms, tracks responses" },
+              { label: "Payroll App + Convex", desc: "Automated engine: detects pay period, sends forms, tracks responses, and syncs results" },
               { label: "Google Sheets", desc: "Output hub: pay rates, confirmation status, and payroll review" },
             ].map((c) => (
               <div key={c.label} style={{ background: C.green, borderRadius: 8, padding: "20px 16px", borderTop: `3px solid ${C.orange}` }}>
@@ -64,8 +64,8 @@ export default function About() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 32, flexWrap: "wrap" }}>
             {[
               { n: "1", label: "Pay Period\nEnds", auto: false },
-              { n: "2", label: "Admin Says\n\"Send Forms\"", auto: false },
-              { n: "3", label: "Claude Fetches\nSessions & Emails", auto: true },
+              { n: "2", label: "Admin Clicks\n\"Send Forms\"", auto: false },
+              { n: "3", label: "App Fetches\nSessions & Emails", auto: true },
               { n: "4", label: "Instructors\nReview & Submit", auto: false },
               { n: "5", label: "Sheet Updates\nAutomatically", auto: true },
               { n: "6", label: "Admin Reviews\n& Pays", auto: false },
@@ -97,7 +97,7 @@ export default function About() {
             <div style={{ background: C.white, border: "1px solid #ddd0b8", borderRadius: 8, overflow: "hidden" }}>
               <div style={{ background: C.green, padding: "10px 16px", fontSize: 12, fontWeight: 700, color: C.white }}>What the Admin Does</div>
               <ul style={{ margin: 0, padding: "16px 16px 16px 32px", fontSize: 13, lineHeight: 2, color: C.black }}>
-                {["Open Claude Desktop", "Type: \"Send forms to all instructors\"", "Confirm the pay period Claude found", "Wait for instructors to submit", "Open the Payroll tab in Google Sheets", "Review TRUE / DISPUTED entries", "Process payroll"].map(item => <li key={item}>{item}</li>)}
+                {["Go to the Admin Dashboard (/admin)", "Select the current pay period", "Click \"Send Forms to All Instructors\"", "Wait for instructors to submit", "Open the Payroll tab in Google Sheets", "Review TRUE / DISPUTED entries", "Process payroll"].map(item => <li key={item}>{item}</li>)}
               </ul>
             </div>
             <div style={{ background: C.white, border: "1px solid #ddd0b8", borderRadius: 8, overflow: "hidden" }}>
@@ -112,20 +112,20 @@ export default function About() {
         {/* Section 03 — Sending Payroll Forms */}
         <Section number="03" title="Sending Payroll Forms">
           <div style={{ background: C.green, borderRadius: 10, padding: "20px 24px", marginBottom: 32 }}>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.15em", color: C.orange, textTransform: "uppercase", marginBottom: 6 }}>Command</div>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.15em", color: C.orange, textTransform: "uppercase", marginBottom: 6 }}>Where to go</div>
             <div style={{ fontSize: 20, fontWeight: 700, color: C.white, marginBottom: 6 }}>
-              "Send the payroll forms to all instructors"
+              Admin Dashboard → Send Forms
             </div>
-            <div style={{ fontSize: 13, color: "#a0b8a0" }}>Or any natural language variation — Claude understands the intent.</div>
+            <div style={{ fontSize: 13, color: "#a0b8a0" }}>Log in at /admin, select the pay period, and click the send button.</div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
             {[
-              { n: 1, title: "Open Claude Desktop", desc: "Launch the Claude Desktop app on your computer." },
-              { n: 2, title: "Type your request", desc: "Use natural language — no need to specify the pay period number. Claude auto-detects it from the Google Sheet." },
-              { n: 3, title: "Confirm what Claude found", desc: "Claude will report back: which pay period it detected, the date range, and the list of instructors it will email." },
-              { n: 4, title: "Forms are sent", desc: "Each instructor receives a personalized email with a unique link. No logins or passwords required for them." },
-              { n: 5, title: "Done — wait for submissions", desc: "The Google Sheet updates automatically as instructors respond. Nothing else needed from you." },
+              { n: 1, title: "Go to the Admin Dashboard", desc: "Navigate to /admin in your browser. Enter the admin password to log in." },
+              { n: 2, title: "Select the pay period", desc: "Use the pay period dropdown to choose the current period. The app shows available periods pulled from Google Sheets." },
+              { n: 3, title: "Preview (optional)", desc: "Expand any instructor card to see which Acuity sessions will be included before sending." },
+              { n: 4, title: "Click \"Send Forms\"", desc: "The app fetches all sessions from Acuity, generates a unique link per instructor, and emails each one automatically." },
+              { n: 5, title: "Done — wait for submissions", desc: "The Google Sheet updates automatically as instructors respond. The Admin Dashboard shows live submission status (Pending / Submitted / Synced)." },
             ].map((step, i, arr) => (
               <div key={step.n} style={{ display: "flex", gap: 16 }}>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
