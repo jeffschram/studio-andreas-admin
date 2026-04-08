@@ -151,9 +151,9 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
     console.log(`Pay Period ${resolvedPeriodNumber}: ${startDate} → ${endDate}`);
 
     // 2. Read instructor list + rate headers from Instructors tab
-    const [rateHeaderRow, ...instructorRows] = await readRange(gToken, "Instructors!A1:M20");
-    // Rate type labels start at column F (index 5)
-    const rateHeaders = (rateHeaderRow ?? []).slice(5);
+    const [rateHeaderRow, ...instructorRows] = await readRange(gToken, "Instructors!A1:N20");
+    // Rate type labels start at column G (index 6). Column F is "Gets Series Pay".
+    const rateHeaders = (rateHeaderRow ?? []).slice(6);
 
     const activeInstructors = instructorRows.filter(
       (r) => r[0] && r[4]?.toLowerCase() === "yes"
@@ -225,15 +225,19 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
     for (const instructorRow of activeInstructors) {
       const calId = parseInt(instructorRow[3]);
       const [name, email] = instructorRow;
+      const getsSeriesPay = instructorRow[5]?.toLowerCase() === "yes";
       const appts = byCalendar.get(calId) ?? [];
 
-      // Separate series (multi-session classes) from non-series appointments
+      // Separate series (multi-session classes) from non-series appointments.
+      // Instructors without series pay never see series start/end rows —
+      // they enter their own hours via the rate-header options.
       const seriesByType = new Map<number, typeof appts>();
       const nonSeriesAppts: typeof appts = [];
 
       for (const a of appts) {
         const typeInfo = apptTypeMap.get(a.appointmentTypeID);
         if (typeInfo?.acuityType === "series") {
+          if (!getsSeriesPay) continue;
           const list = seriesByType.get(a.appointmentTypeID) ?? [];
           list.push(a);
           seriesByType.set(a.appointmentTypeID, list);
@@ -345,7 +349,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
       // Build available rates for this instructor
       const availableRates = rateHeaders
-        .map((label, i) => ({ label, rate: parseFloat(instructorRow[5 + i] ?? "") || 0 }))
+        .map((label, i) => ({ label, rate: parseFloat(instructorRow[6 + i] ?? "") || 0 }))
         .filter((r) => r.rate > 0);
 
       // Skip if no appointments this period AND no additional rate types defined
@@ -506,7 +510,7 @@ export const previewPeriodInternal = internalAction({
     const endDate = toIsoDate(periodRow[2]);
 
     // Load active instructors
-    const [, ...instructorRows] = await readRange(gToken, "Instructors!A1:M20");
+    const [, ...instructorRows] = await readRange(gToken, "Instructors!A1:N20");
     const activeInstructors = instructorRows.filter((r) => r[0] && r[4]?.toLowerCase() === "yes");
     const calendarMap = new Map<number, string[]>();
     for (const row of activeInstructors) {
@@ -558,24 +562,26 @@ export const previewPeriodInternal = internalAction({
     }
 
     // Load rate headers (to determine which instructors have additional rate types)
-    const [rateHeaderRowPreview] = await readRange(gToken, "Instructors!A1:M1");
-    const rateHeadersPreview = (rateHeaderRowPreview ?? []).slice(5);
+    const [rateHeaderRowPreview] = await readRange(gToken, "Instructors!A1:N1");
+    const rateHeadersPreview = (rateHeaderRowPreview ?? []).slice(6);
 
     // Build per-instructor appointment summaries (same series logic as sendForms)
     const instructors = await Promise.all(activeInstructors.map(async (row) => {
       const calId = parseInt(row[3]);
+      const getsSeriesPay = row[5]?.toLowerCase() === "yes";
       const appts = byCalendar.get(calId) ?? [];
-      const hasRates = rateHeadersPreview.some((_, i) => parseFloat(row[5 + i] ?? "") > 0);
+      const hasRates = rateHeadersPreview.some((_, i) => parseFloat(row[6 + i] ?? "") > 0);
 
       type PreviewAppt = { info: string; category: string; datetime: string; quantity: number };
       const grouped: PreviewAppt[] = [];
 
-      // Separate series from non-series
+      // Separate series from non-series (skip series entirely for non-series-pay instructors)
       const seriesByType = new Map<number, AcuityAppt[]>();
       const nonSeriesAppts: AcuityAppt[] = [];
       for (const a of appts) {
         const typeInfo = apptTypeMap.get(a.appointmentTypeID);
         if (typeInfo?.acuityType === "series") {
+          if (!getsSeriesPay) continue;
           const list = seriesByType.get(a.appointmentTypeID) ?? [];
           list.push(a);
           seriesByType.set(a.appointmentTypeID, list);
