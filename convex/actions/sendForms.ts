@@ -305,33 +305,38 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
           }
 
           const typeName = typeInfo?.name ?? sorted[0].type;
-          // classSize from appointment type; fall back to enrollment count this period
-          const classSize = (typeInfo?.classSize ?? 0) > 0 ? typeInfo!.classSize : sorted.length;
           // Price from appointment type (full-course price per booking)
           const price = (typeInfo?.price ?? 0) > 0 ? typeInfo!.price : parseFloat(sorted[0].price) || 0;
           const category = getCategory(typeName);
 
+          // Actual enrollment = # of appointments at a single session's exact datetime
+          // (Acuity creates one appointment per student per session for series types)
+          const firstDatetime = sorted[0].datetime;
+          const lastDatetime = sorted[sorted.length - 1].datetime;
+          const startEnrollment = sorted.filter((a) => a.datetime === firstDatetime).length;
+          const endEnrollment = sorted.filter((a) => a.datetime === lastDatetime).length;
+
           if (isStart) {
             allSessions.push({
-              datetime: sorted[0].datetime,
+              datetime: firstDatetime,
               info: `${shorten(typeName)} (Start)`,
               category,
-              qty: classSize,
+              qty: startEnrollment,
               price,
               eventType: "start",
             });
-            console.log(`  → Series START: ${typeName}`);
+            console.log(`  → Series START: ${typeName} (${startEnrollment} enrolled)`);
           }
           if (isEnd) {
             allSessions.push({
-              datetime: sorted[sorted.length - 1].datetime,
+              datetime: lastDatetime,
               info: `${shorten(typeName)} (End)`,
               category,
-              qty: classSize,
+              qty: endEnrollment,
               price,
               eventType: "end",
             });
-            console.log(`  → Series END: ${typeName}`);
+            console.log(`  → Series END: ${typeName} (${endEnrollment} enrolled)`);
           }
         }
       }
@@ -629,14 +634,19 @@ export const previewPeriodInternal = internalAction({
         for (const { typeInfo, sorted, isStart, isEnd } of seriesChecks) {
           if (!isStart && !isEnd) continue; // middle of series — skip
           const typeName = typeInfo?.name ?? sorted[0].type;
-          const classSize = (typeInfo?.classSize ?? 0) > 0 ? typeInfo!.classSize : sorted.length;
           const category = getCategory(typeName);
 
+          // Actual enrollment = # of appointments at a single session's exact datetime
+          const firstDatetime = sorted[0].datetime;
+          const lastDatetime = sorted[sorted.length - 1].datetime;
+          const startEnrollment = sorted.filter((a) => a.datetime === firstDatetime).length;
+          const endEnrollment = sorted.filter((a) => a.datetime === lastDatetime).length;
+
           if (isStart) {
-            grouped.push({ info: `${shorten(typeName)} (Start)`, category, datetime: sorted[0].datetime, quantity: classSize });
+            grouped.push({ info: `${shorten(typeName)} (Start)`, category, datetime: firstDatetime, quantity: startEnrollment });
           }
           if (isEnd) {
-            grouped.push({ info: `${shorten(typeName)} (End)`, category, datetime: sorted[sorted.length - 1].datetime, quantity: classSize });
+            grouped.push({ info: `${shorten(typeName)} (End)`, category, datetime: lastDatetime, quantity: endEnrollment });
           }
         }
       }
