@@ -875,48 +875,50 @@ export default function Admin() {
             )}
           </>
         )}
-        {/* DEV ONLY: Clear all data */}
-        <div
-          style={{
-            marginTop: 48,
-            paddingTop: 32,
-            borderTop: "1px solid #e5e7eb",
-          }}
-        >
-          <p
+        {/* DEV ONLY: Clear all data — gated by VITE_SHOW_CLEAR_DATA_BUTTON env var */}
+        {import.meta.env.VITE_SHOW_CLEAR_DATA_BUTTON === "true" && (
+          <div
             style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              color: "#9ca3af",
-              marginBottom: 12,
+              marginTop: 48,
+              paddingTop: 32,
+              borderTop: "1px solid #e5e7eb",
             }}
           >
-            Testing Only
-          </p>
-          <button
-            onClick={handleClearData}
-            disabled={clearing}
-            style={{
-              padding: "10px 20px",
-              borderRadius: 8,
-              background: "transparent",
-              color: "#dc2626",
-              fontSize: 13,
-              fontWeight: 600,
-              border: "1px solid #fca5a5",
-              cursor: clearing ? "wait" : "pointer",
-            }}
-          >
-            {clearing ? "Clearing..." : "Clear All Convex Data"}
-          </button>
-          {clearResult && (
-            <p style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>
-              {clearResult}
+            <p
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                color: "#9ca3af",
+                marginBottom: 12,
+              }}
+            >
+              Testing Only
             </p>
-          )}
-        </div>
+            <button
+              onClick={handleClearData}
+              disabled={clearing}
+              style={{
+                padding: "10px 20px",
+                borderRadius: 8,
+                background: "transparent",
+                color: "#dc2626",
+                fontSize: 13,
+                fontWeight: 600,
+                border: "1px solid #fca5a5",
+                cursor: clearing ? "wait" : "pointer",
+              }}
+            >
+              {clearing ? "Clearing..." : "Clear All Convex Data"}
+            </button>
+            {clearResult && (
+              <p style={{ fontSize: 13, color: "#6b7280", marginTop: 8 }}>
+                {clearResult}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
