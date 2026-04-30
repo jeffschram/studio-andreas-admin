@@ -34,6 +34,10 @@ export default defineSchema({
     instructorNotes: v.optional(v.string()),
     // Per-instructor additional hour types + rates, sourced from Instructors sheet at send time
     availableRates: v.optional(v.array(v.object({ label: v.string(), rate: v.number() }))),
+    // Membership types shown on the first pay period of each month (Nerea + Chelsea only)
+    membershipOptions: v.optional(v.array(v.object({ label: v.string(), pricePerMember: v.number() }))),
+    // Filled in when the instructor submits their form
+    membershipCounts: v.optional(v.array(v.object({ label: v.string(), count: v.number(), pricePerMember: v.number() }))),
   })
     .index("by_token", ["token"])
     .index("by_pay_period", ["payPeriodId"])

@@ -73,6 +73,10 @@ export const submit = mutation({
         notes: v.optional(v.string()),
       })
     ),
+    // Membership counts (first pay period of month only, Nerea + Chelsea)
+    membershipCounts: v.optional(
+      v.array(v.object({ label: v.string(), count: v.number(), pricePerMember: v.number() }))
+    ),
     instructorNotes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -107,10 +111,12 @@ export const submit = mutation({
     );
 
     // Mark submission as submitted
+    const validMembershipCounts = (args.membershipCounts ?? []).filter((m) => m.count > 0);
     await ctx.db.patch(submission._id, {
       status: "submitted",
       submittedAt: Date.now(),
       instructorNotes: args.instructorNotes,
+      membershipCounts: validMembershipCounts.length > 0 ? validMembershipCounts : undefined,
     });
 
     // Trigger sheet sync async (non-blocking)
@@ -129,6 +135,7 @@ export const create = mutation({
     instructorId: v.id("instructors"),
     token: v.string(),
     availableRates: v.optional(v.array(v.object({ label: v.string(), rate: v.number() }))),
+    membershipOptions: v.optional(v.array(v.object({ label: v.string(), pricePerMember: v.number() }))),
     sessions: v.array(
       v.object({
         datetime: v.string(),
@@ -148,6 +155,7 @@ export const create = mutation({
       token: args.token,
       status: "pending",
       availableRates: args.availableRates,
+      membershipOptions: args.membershipOptions,
     });
 
     await Promise.all(

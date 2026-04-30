@@ -9,6 +9,20 @@ const SPREADSHEET_ID = "1KVEdNyJkHuZFGNG0sPzdu1b4nkAwqLqE14Yxp2bZvE8";
 const ACUITY_BASE = "https://acuityscheduling.com/api/v1";
 const APP_BASE_URL = (process.env.APP_BASE_URL ?? "http://localhost:5173").replace(/\/+$/, "");
 
+// Acuity category whose appointments instructors enter as hourly "Event Hours" instead of session checkboxes
+const EVENTS_ACUITY_CATEGORY = "Events/Private Bookings";
+
+// Instructors who receive membership pay on the first pay period of each month
+const MEMBERSHIP_OPTIONS: Record<string, { label: string; pricePerMember: number }[]> = {
+  "Nerea Nicholson": [
+    { label: "Monthly Limited", pricePerMember: 200 },
+    { label: "Monthly Full", pricePerMember: 300 },
+  ],
+  "Chelsea Danburg": [
+    { label: "Monthly Full", pricePerMember: 350 },
+  ],
+};
+
 // ─── Acuity ───────────────────────────────────────────────────────────────────
 
 async function acuityFetch(path: string): Promise<unknown> {
@@ -169,12 +183,13 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
     // 3. Fetch appointment types (to identify series and get class sizes / full-course prices)
     const apptTypesRaw = await acuityFetch("/appointment-types");
-    const apptTypeMap = new Map<number, { name: string; acuityType: string; classSize: number; price: number }>();
+    const apptTypeMap = new Map<number, { name: string; acuityType: string; acuityCategory: string; classSize: number; price: number }>();
     if (Array.isArray(apptTypesRaw)) {
-      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; classSize: number | null; price: string }>) {
+      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; category: string; classSize: number | null; price: string }>) {
         apptTypeMap.set(t.id, {
           name: t.name,
           acuityType: t.type, // "service" | "class" | "series"
+          acuityCategory: t.category ?? "",
           classSize: t.classSize ?? 1,
           price: parseFloat(t.price) || 0,
         });
@@ -221,6 +236,19 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       eventType: "start" | "end" | "session";
     };
 
+    // Determine if this is the first pay period of the month (for membership UI).
+    // "First" = no earlier-numbered period has the same payDate year-month.
+    const currentPayDate = toIsoDate(periodRow[3] ?? "");
+    const currentMonth = currentPayDate.slice(0, 7); // "2026-04"
+    const isFirstPeriodOfMonth =
+      resolvedPeriodNumber === 1 ||
+      !periodRows.some((r) => {
+        const num = parseInt(r[0]);
+        if (num >= resolvedPeriodNumber || !r[3]) return false;
+        return toIsoDate(r[3]).slice(0, 7) === currentMonth;
+      });
+    console.log(`Pay period ${resolvedPeriodNumber} isFirstPeriodOfMonth: ${isFirstPeriodOfMonth}`);
+
     // Iterate ALL active instructors — not just those with appointments
     for (const instructorRow of activeInstructors) {
       const calId = parseInt(instructorRow[3]);
@@ -231,11 +259,14 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
       // Separate series (multi-session classes) from non-series appointments.
       // Instructors without series pay never see series start/end rows —
       // they enter their own hours via the rate-header options.
+      // Also skip any appointment types in excluded Acuity categories.
       const seriesByType = new Map<number, typeof appts>();
       const nonSeriesAppts: typeof appts = [];
 
       for (const a of appts) {
         const typeInfo = apptTypeMap.get(a.appointmentTypeID);
+        // Skip Events/Private Bookings — instructors enter these as hourly "Event Hours"
+        if (typeInfo?.acuityCategory === EVENTS_ACUITY_CATEGORY) continue;
         if (typeInfo?.acuityType === "series") {
           if (!getsSeriesPay) continue;
           const list = seriesByType.get(a.appointmentTypeID) ?? [];
@@ -246,12 +277,14 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
         }
       }
 
-      // Non-series: privates (per occurrence) + everything else (grouped by type+timeslot)
+      // Non-series: privates (per occurrence) + everything else (grouped by type+timeslot).
+      // Open Studio appointments are excluded — instructors enter "Open Studio Hours" manually.
       const allSessions: SessionData[] = [];
       const groupMap = new Map<string, typeof appts>();
 
       for (const a of nonSeriesAppts) {
         const cat = getCategory(a.type);
+        if (cat === "Open Studio") continue;
         if (cat === "Private") {
           allSessions.push({
             datetime: a.datetime,
@@ -352,8 +385,14 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
         .map((label, i) => ({ label, rate: parseFloat(instructorRow[6 + i] ?? "") || 0 }))
         .filter((r) => r.rate > 0);
 
-      // Skip if no appointments this period AND no additional rate types defined
-      if (sessions.length === 0 && availableRates.length === 0) {
+      // Build membership options for this instructor (first period of month only)
+      const membershipOptions = isFirstPeriodOfMonth ? (MEMBERSHIP_OPTIONS[name] ?? null) : null;
+      if (isFirstPeriodOfMonth && MEMBERSHIP_OPTIONS[name]) {
+        console.log(`  Membership options set for ${name}: ${MEMBERSHIP_OPTIONS[name].map((m) => m.label).join(", ")}`);
+      }
+
+      // Skip if no appointments, no additional rate types, and no membership options
+      if (sessions.length === 0 && availableRates.length === 0 && !membershipOptions) {
         console.log(`Skipping ${name} — no appointments and no additional rates`);
         results.push({ instructor: name, email, link: "", skipped: true, skipReason: "No appointments · No additional rates" });
         continue;
@@ -377,6 +416,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
         }),
         token,
         availableRates,
+        membershipOptions: membershipOptions ?? undefined,
         sessions: sessions.map((s) => ({
           datetime: s.datetime,
           info: s.info,
@@ -549,12 +589,13 @@ export const previewPeriodInternal = internalAction({
 
     // Fetch appointment types to identify series
     const apptTypesRaw = await acuityFetch("/appointment-types");
-    const apptTypeMap = new Map<number, { name: string; acuityType: string; classSize: number; price: number }>();
+    const apptTypeMap = new Map<number, { name: string; acuityType: string; acuityCategory: string; classSize: number; price: number }>();
     if (Array.isArray(apptTypesRaw)) {
-      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; classSize: number | null; price: string }>) {
+      for (const t of apptTypesRaw as Array<{ id: number; name: string; type: string; category: string; classSize: number | null; price: string }>) {
         apptTypeMap.set(t.id, {
           name: t.name,
           acuityType: t.type,
+          acuityCategory: t.category ?? "",
           classSize: t.classSize ?? 1,
           price: parseFloat(t.price) || 0,
         });
@@ -575,11 +616,12 @@ export const previewPeriodInternal = internalAction({
       type PreviewAppt = { info: string; category: string; datetime: string; quantity: number };
       const grouped: PreviewAppt[] = [];
 
-      // Separate series from non-series (skip series entirely for non-series-pay instructors)
+      // Separate series from non-series — same exclusions as sendForms
       const seriesByType = new Map<number, AcuityAppt[]>();
       const nonSeriesAppts: AcuityAppt[] = [];
       for (const a of appts) {
         const typeInfo = apptTypeMap.get(a.appointmentTypeID);
+        if (typeInfo?.acuityCategory === EVENTS_ACUITY_CATEGORY) continue;
         if (typeInfo?.acuityType === "series") {
           if (!getsSeriesPay) continue;
           const list = seriesByType.get(a.appointmentTypeID) ?? [];
@@ -594,6 +636,7 @@ export const previewPeriodInternal = internalAction({
       const groupMap = new Map<string, AcuityAppt[]>();
       for (const a of nonSeriesAppts) {
         const cat = getCategory(a.type);
+        if (cat === "Open Studio") continue;
         if (cat === "Private") {
           grouped.push({
             info: `${a.firstName} ${a.lastName}`.trim(),

@@ -10,7 +10,11 @@ const C = {
   offwhite: "#FAFAFA",
 };
 
-const CONVEX_SITE_URL = import.meta.env.VITE_CONVEX_SITE_URL as string;
+// Dev: use relative path so Vite proxies the request (avoids CORS).
+// Production: use the full Convex site URL directly.
+const API_BASE = import.meta.env.DEV
+  ? ''
+  : (import.meta.env.VITE_CONVEX_SITE_URL as string ?? '');
 
 type Appointment = {
   info: string;
@@ -110,7 +114,7 @@ export default function Admin() {
     if (!authenticated) return;
     setLoading(true);
     setError(null);
-    fetch(`${CONVEX_SITE_URL}/api/pay-period-info`, {
+    fetch(`${API_BASE}/api/pay-period-info`, {
       headers: { Authorization: `Bearer ${adminSecret}` },
     })
       .then(async (res) => {
@@ -145,7 +149,7 @@ export default function Admin() {
     setPreviewLoading(true);
     setPreview(null);
     setOpenAccordions(new Set());
-    fetch(`${CONVEX_SITE_URL}/api/period-preview?payPeriodNumber=${num}`, {
+    fetch(`${API_BASE}/api/period-preview?payPeriodNumber=${num}`, {
       headers: { Authorization: `Bearer ${secret}` },
     })
       .then(async (res) => {
@@ -159,7 +163,7 @@ export default function Admin() {
 
   const fetchStatuses = (num: number, secret: string) => {
     setStatuses(null);
-    fetch(`${CONVEX_SITE_URL}/api/submission-status?payPeriodNumber=${num}`, {
+    fetch(`${API_BASE}/api/submission-status?payPeriodNumber=${num}`, {
       headers: { Authorization: `Bearer ${secret}` },
     })
       .then(async (res) => {
@@ -187,7 +191,7 @@ export default function Admin() {
     setClearing(true);
     setClearResult(null);
     try {
-      const res = await fetch(`${CONVEX_SITE_URL}/api/clear-all-data`, {
+      const res = await fetch(`${API_BASE}/api/clear-all-data`, {
         method: "POST",
         headers: { Authorization: `Bearer ${adminSecret}` },
       });
@@ -230,7 +234,7 @@ export default function Admin() {
     }
 
     try {
-      const res = await fetch(`${CONVEX_SITE_URL}/api/send-forms`, {
+      const res = await fetch(`${API_BASE}/api/send-forms`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${adminSecret}`,

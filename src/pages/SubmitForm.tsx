@@ -55,6 +55,7 @@ export default function SubmitForm({ token }: { token: string }) {
   const [additionalEntries, setAdditionalEntries] = useState<
     AdditionalEntry[]
   >([]);
+  const [membershipCounts, setMembershipCounts] = useState<Record<string, number>>({});
   const [instructorNotes, setInstructorNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -97,6 +98,7 @@ export default function SubmitForm({ token }: { token: string }) {
   const { submission, instructor, payPeriod, sessions } = data;
   const availableRates = submission.availableRates ?? [];
   const availableTypes = availableRates.map((r) => r.label);
+  const membershipOptions = submission.membershipOptions ?? [];
 
   if (submission.status === "submitted" || submitted) {
     return (
@@ -141,6 +143,13 @@ export default function SubmitForm({ token }: { token: string }) {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
+      const membershipCountsArray = membershipOptions
+        .map((opt) => ({
+          label: opt.label,
+          count: membershipCounts[opt.label] ?? 0,
+          pricePerMember: opt.pricePerMember,
+        }))
+        .filter((m) => m.count > 0);
       await submitMutation({
         token,
         sessionConfirmations: sessions.map((s) => ({
@@ -150,6 +159,7 @@ export default function SubmitForm({ token }: { token: string }) {
         additionalEntries: additionalEntries.filter(
           (e) => e.date && e.hours > 0
         ),
+        membershipCounts: membershipCountsArray.length > 0 ? membershipCountsArray : undefined,
         instructorNotes: instructorNotes || undefined,
       });
       setSubmitted(true);
@@ -264,6 +274,49 @@ export default function SubmitForm({ token }: { token: string }) {
             )}
           </CardContent>
         </Card>
+
+        {/* Memberships — shown only on the first pay period of the month for Nerea + Chelsea */}
+        {membershipOptions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Monthly memberships</CardTitle>
+              <CardDescription>
+                Enter the number of active memberships in your department this month.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {membershipOptions.map((opt) => (
+                <div key={opt.label} className="flex items-center gap-4">
+                  <Label className="w-48 shrink-0">
+                    {opt.label}
+                    <span className="block text-xs text-muted-foreground font-normal">
+                      ${opt.pricePerMember}/member · you earn 10%
+                    </span>
+                  </Label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={membershipCounts[opt.label] ?? ""}
+                    onChange={(e) =>
+                      setMembershipCounts((prev) => ({
+                        ...prev,
+                        [opt.label]: parseInt(e.target.value) || 0,
+                      }))
+                    }
+                    placeholder="0"
+                    className="w-24 h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                  />
+                  {(membershipCounts[opt.label] ?? 0) > 0 && (
+                    <span className="text-sm text-muted-foreground">
+                      = ${((membershipCounts[opt.label] ?? 0) * opt.pricePerMember * 0.097).toFixed(2)} earnings
+                    </span>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         <Separator />
 

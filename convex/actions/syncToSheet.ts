@@ -325,7 +325,8 @@ export const run = internalAction({
 
     // Build placeholder rows — we'll append first, then rewrite with correct row numbers
     // (Two-step: append placeholders → get start row → rewrite with formulas)
-    const totalRows = sessions.length + additionalEntries.length;
+    const validMembershipCounts = (submission.membershipCounts ?? []).filter((m) => m.count > 0);
+    const totalRows = sessions.length + additionalEntries.length + validMembershipCounts.length;
     if (totalRows === 0) {
       console.log(`No rows to write for ${instructorName}`);
       await ctx.runMutation(internal.submissions.markSynced, { submissionId });
@@ -387,6 +388,25 @@ export const run = internalAction({
         rate > 0 ? `$${rate.toFixed(2)}` : "",             // G: Hourly rate
         rate > 0 ? `=E${rowIdx}*G${rowIdx}` : "",          // H: Total
         earnings,                                          // I: Instructor Earnings (flat: hours × rate)
+        "",                                                // J: Commissions
+        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+        "",                                                // L: (unused)
+      ]);
+      rowIdx++;
+    }
+
+    for (const membership of validMembershipCounts) {
+      const isFirst = rows.length === 0;
+      rows.push([
+        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+        isFirst ? instructorName : "",                     // B: Instructor
+        membership.label,                                  // C: e.g. "Monthly Limited"
+        "Membership",                                      // D: triggers the earnings formula
+        String(membership.count),                          // E: number of members
+        "TRUE",                                            // F: Confirmed
+        `$${membership.pricePerMember.toFixed(2)}`,        // G: price per member
+        `=E${rowIdx}*G${rowIdx}`,                          // H: total revenue (count × price)
+        earningsFormula(rowIdx),                           // I: (H*0.97)*0.1 via D="Membership"
         "",                                                // J: Commissions
         isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
         "",                                                // L: (unused)
