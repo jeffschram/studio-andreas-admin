@@ -57,32 +57,38 @@ async function writeRows(token: string, range: string, rows: string[][]) {
     }
   );
   const json = await res.json();
-  if (!res.ok) console.error(`writeRows error for ${range}:`, JSON.stringify(json));
+  if (!res.ok) {
+    console.error(`writeRows error for ${range}:`, JSON.stringify(json));
+    throw new Error(`Failed to write rows to ${range}`);
+  }
   return json;
 }
 
-async function appendRows(token: string, rows: string[][]): Promise<number> {
-  // Append rows after last data row in Payroll tab. Returns the 1-indexed start row of appended data.
+async function readRows(token: string, range: string): Promise<string[][]> {
   const res = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(PAYROLL_TAB)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ values: rows }),
-    }
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
   );
-  const json = await res.json() as { updates?: { updatedRange?: string } };
+  const json = await res.json() as { values?: string[][] };
   if (!res.ok) {
-    console.error("appendRows error:", JSON.stringify(json));
-    return -1;
+    console.error(`readRows error for ${range}:`, JSON.stringify(json));
+    throw new Error(`Failed to read rows from ${range}`);
   }
-  // Parse the start row from updatedRange like "Payroll!A42:L50"
-  const updatedRange = json.updates?.updatedRange ?? "";
-  const match = updatedRange.match(/!A(\d+)/);
-  return match ? parseInt(match[1]) : -1;
+  return json.values ?? [];
+}
+
+async function getNextPayrollStartRow(token: string): Promise<number> {
+  const rows = await readRows(token, `${PAYROLL_TAB}!A:L`);
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const hasPayrollData = rows[i].some((cell) => cell.trim() !== "");
+    if (hasPayrollData) {
+      // Convert zero-based array index to the next 1-indexed sheet row.
+      return Math.max(i + 2, 2);
+    }
+  }
+
+  return 2;
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -323,8 +329,9 @@ export const run = internalAction({
       (submission.availableRates ?? []).map((r) => [r.label, r.rate])
     );
 
-    // Build placeholder rows — we'll append first, then rewrite with correct row numbers
-    // (Two-step: append placeholders → get start row → rewrite with formulas)
+    // Build rows starting after the last occupied row in the app-managed A:L area.
+    // Avoid values.append here: Sheets can infer a table from manual notes in later
+    // columns and place rows outside the payroll columns.
     const validMembershipCounts = (submission.membershipCounts ?? []).filter((m) => m.count > 0);
     const totalRows = sessions.length + additionalEntries.length + validMembershipCounts.length;
     if (totalRows === 0) {
@@ -336,18 +343,10 @@ export const run = internalAction({
     // Fetch the Payroll tab's sheetId (needed for formatting requests)
     const sheetId = await getPayrollSheetId(gToken);
 
-    // Step 1: Append placeholder rows to learn which rows we get
-    const placeholders = Array.from({ length: totalRows }, (_, i) => [
-      i === 0 ? String(payPeriodNum) : "",
-      i === 0 ? instructorName : "",
-      "...", // will be overwritten
-    ]);
-    const startRow = await appendRows(gToken, placeholders);
-    if (startRow < 0) {
-      throw new Error("Failed to append placeholder rows to Payroll tab");
-    }
+    // Step 1: Determine the next row from columns A:L only.
+    const startRow = await getNextPayrollStartRow(gToken);
 
-    // Step 2: Build proper rows now that we know row numbers
+    // Step 2: Build proper rows now that we know row numbers.
     const rows: string[][] = [];
     let rowIdx = startRow;
     const endRow = startRow + totalRows - 1;
