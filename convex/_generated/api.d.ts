@@ -14,6 +14,7 @@ import type * as actions_syncToSheet from "../actions/syncToSheet.js";
 import type * as http from "../http.js";
 import type * as instructors from "../instructors.js";
 import type * as payPeriods from "../payPeriods.js";
+import type * as payrollHistory from "../payrollHistory.js";
 import type * as seed from "../seed.js";
 import type * as submissions from "../submissions.js";
 
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   instructors: typeof instructors;
   payPeriods: typeof payPeriods;
+  payrollHistory: typeof payrollHistory;
   seed: typeof seed;
   submissions: typeof submissions;
 }>;
