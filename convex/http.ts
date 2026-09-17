@@ -194,6 +194,66 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/retry-sync-pay-period
+http.route({
+  path: "/api/retry-sync-pay-period",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// POST /api/retry-sync-pay-period
+// Body: { "payPeriodNumber": number, "dryRun"?: boolean }
+// Header: Authorization: Bearer <ADMIN_SECRET>
+http.route({
+  path: "/api/retry-sync-pay-period",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    let body: { payPeriodNumber?: number; dryRun?: boolean } = {};
+    try {
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "JSON body required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    if (typeof body.payPeriodNumber !== "number") {
+      return new Response(JSON.stringify({ error: "payPeriodNumber required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const result = await ctx.runAction(internal.actions.syncToSheet.retryPayPeriod, {
+      payPeriodNumber: body.payPeriodNumber,
+      dryRun: body.dryRun ?? false,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }),
+});
+
 // CORS preflight for /api/clear-all-data
 http.route({
   path: "/api/clear-all-data",

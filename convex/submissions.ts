@@ -285,6 +285,53 @@ export const getStatusesForPeriod = internalQuery({
   },
 });
 
+export const getSubmittedUnsyncedForPeriod = internalQuery({
+  args: { payPeriodNumber: v.number() },
+  handler: async (ctx, { payPeriodNumber }) => {
+    const payPeriod = await ctx.db
+      .query("payPeriods")
+      .withIndex("by_number", (q) => q.eq("number", payPeriodNumber))
+      .unique();
+    if (!payPeriod) return [];
+
+    const submissions = await ctx.db
+      .query("submissions")
+      .withIndex("by_pay_period", (q) => q.eq("payPeriodId", payPeriod._id))
+      .collect();
+
+    const results = await Promise.all(
+      submissions
+        .filter((sub) => sub.status === "submitted")
+        .map(async (sub) => {
+          const instructor = await ctx.db.get(sub.instructorId);
+          const sessions = await ctx.db
+            .query("sessions")
+            .withIndex("by_submission", (q) => q.eq("submissionId", sub._id))
+            .collect();
+          const additionalEntries = await ctx.db
+            .query("additionalEntries")
+            .withIndex("by_submission", (q) => q.eq("submissionId", sub._id))
+            .collect();
+          const membershipRows = (sub.membershipCounts ?? []).filter((m) => m.count > 0).length;
+          const totalRows = sessions.length + additionalEntries.length + membershipRows;
+          const syncedRows = sessions.filter((s) => s.syncedToSheet).length +
+            additionalEntries.filter((e) => e.syncedToSheet).length;
+          const synced = totalRows > 0 && syncedRows === sessions.length + additionalEntries.length;
+
+          return {
+            submissionId: sub._id,
+            instructorName: instructor?.name ?? "Unknown",
+            submittedAt: sub.submittedAt,
+            totalRows,
+            synced,
+          };
+        })
+    );
+
+    return results.filter((result) => result.totalRows > 0 && !result.synced);
+  },
+});
+
 export const markSynced = internalMutation({
   args: { submissionId: v.id("submissions") },
   handler: async (ctx, { submissionId }) => {

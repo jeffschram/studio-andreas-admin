@@ -1,6 +1,8 @@
 "use node";
 
 import { internalAction } from "../_generated/server";
+import type { ActionCtx } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import * as crypto from "crypto";
@@ -303,132 +305,197 @@ function earningsFormula(rowNum: number): string {
 
 // ─── Main sync action ─────────────────────────────────────────────────────────
 
+async function syncSubmission(ctx: ActionCtx, submissionId: Id<"submissions">) {
+  const data = await ctx.runQuery(internal.submissions.getForSync, {
+    submissionId,
+  });
+  if (!data) throw new Error("Submission not found");
+
+  const { sessions, additionalEntries, instructor, payPeriod, submission } = data;
+  const gToken = await getGoogleAccessToken();
+
+  // Read instructor config from Instructors sheet tab
+  const instructorConfigs = await getInstructorConfigs(gToken);
+  const instructorConfig = instructor ? instructorConfigs.get(instructor.name) : undefined;
+
+  if (instructorConfig && !instructorConfig.includeInPayroll) {
+    console.log(`Skipping ${instructor?.name} — excluded from payroll`);
+    return;
+  }
+
+  const instructorName = instructor?.name ?? "Unknown";
+  const payPeriodNum = payPeriod?.number ?? 0;
+  const rateMap = new Map(
+    (submission.availableRates ?? []).map((r) => [r.label, r.rate])
+  );
+
+  // Build rows starting after the last occupied row in the app-managed A:L area.
+  // Avoid values.append here: Sheets can infer a table from manual notes in later
+  // columns and place rows outside the payroll columns.
+  const validMembershipCounts = (submission.membershipCounts ?? []).filter((m) => m.count > 0);
+  const totalRows = sessions.length + additionalEntries.length + validMembershipCounts.length;
+  if (totalRows === 0) {
+    console.log(`No rows to write for ${instructorName}`);
+    await ctx.runMutation(internal.submissions.markSynced, { submissionId });
+    return;
+  }
+
+  // Fetch the Payroll tab's sheetId (needed for formatting requests)
+  const sheetId = await getPayrollSheetId(gToken);
+
+  // Step 1: Determine the next row from columns A:L only.
+  const startRow = await getNextPayrollStartRow(gToken);
+
+  // Step 2: Build proper rows now that we know row numbers.
+  const rows: string[][] = [];
+  let rowIdx = startRow;
+  const endRow = startRow + totalRows - 1;
+  // K column: SUM of all instructor earnings for this block, on the first row only
+  const kTotal = `=SUM(I${startRow}:I${endRow})`;
+
+  for (const session of sessions) {
+    const isFirst = rows.length === 0;
+    const grossFormula = session.pricePerBooking > 0 ? `=E${rowIdx}*G${rowIdx}` : "";
+    rows.push([
+      isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+      isFirst ? instructorName : "",                     // B: Instructor
+      session.info,                                      // C: Class name / description
+      session.category,                                  // D: Category
+      String(session.quantity),                          // E: Student count (or 1 for privates)
+      session.confirmedByInstructor ? "TRUE" : "DISPUTED", // F: Confirmed
+      session.pricePerBooking > 0 ? `$${session.pricePerBooking.toFixed(2)}` : "", // G: Price per booking
+      grossFormula,                                      // H: Gross Total (=E*G)
+      session.pricePerBooking > 0 ? earningsFormula(rowIdx) : "", // I: Instructor Earnings
+      "",                                                // J: Commissions
+      isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+      "",                                                // L: (unused)
+    ]);
+    rowIdx++;
+  }
+
+  for (const entry of additionalEntries) {
+    const isFirst = rows.length === 0;
+    const rate = rateMap.get(entry.type) ?? 0;
+    const earnings = rate > 0 ? (entry.hours * rate).toFixed(2) : "";
+    rows.push([
+      isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+      isFirst ? instructorName : "",                     // B: Instructor
+      entry.notes ? `${entry.type} - ${entry.notes}` : entry.type, // C: Description
+      entry.type,                                        // D: Category
+      String(entry.hours),                               // E: Hours
+      "TRUE",                                            // F: Confirmed
+      rate > 0 ? `$${rate.toFixed(2)}` : "",             // G: Hourly rate
+      rate > 0 ? `=E${rowIdx}*G${rowIdx}` : "",          // H: Total
+      earnings,                                          // I: Instructor Earnings (flat: hours × rate)
+      "",                                                // J: Commissions
+      isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+      "",                                                // L: (unused)
+    ]);
+    rowIdx++;
+  }
+
+  for (const membership of validMembershipCounts) {
+    const isFirst = rows.length === 0;
+    rows.push([
+      isFirst ? String(payPeriodNum) : "",              // A: Pay Period
+      isFirst ? instructorName : "",                     // B: Instructor
+      membership.label,                                  // C: e.g. "Monthly Limited"
+      "Membership",                                      // D: triggers the earnings formula
+      String(membership.count),                          // E: number of members
+      "TRUE",                                            // F: Confirmed
+      `$${membership.pricePerMember.toFixed(2)}`,        // G: price per member
+      `=E${rowIdx}*G${rowIdx}`,                          // H: total revenue (count × price)
+      earningsFormula(rowIdx),                           // I: (H*0.97)*0.1 via D="Membership"
+      "",                                                // J: Commissions
+      isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
+      "",                                                // L: (unused)
+    ]);
+    rowIdx++;
+  }
+
+  // Step 3: Write the real data, with formulas, directly into A:L.
+  await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
+
+  // Step 4: Apply formatting — background, bold name, bold total, bottom border
+  await formatBlock(gToken, sheetId, startRow, endRow, instructorName, instructorConfig?.sheetColor);
+
+  // Step 5: Draw a bold black top border if this is the first instructor of a new pay period
+  await addPayPeriodSeparatorIfNeeded(gToken, sheetId, startRow, payPeriodNum);
+
+  console.log(
+    `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
+    `at Payroll rows ${startRow}–${endRow} ` +
+    `(${sessions.length} sessions, ${additionalEntries.length} additional entries)`
+  );
+
+  // Mark everything as synced in Convex
+  await ctx.runMutation(internal.submissions.markSynced, { submissionId });
+}
+
 export const run = internalAction({
   args: { submissionId: v.id("submissions") },
   handler: async (ctx, { submissionId }) => {
-    const data = await ctx.runQuery(internal.submissions.getForSync, {
-      submissionId,
-    });
-    if (!data) throw new Error("Submission not found");
+    await syncSubmission(ctx, submissionId);
+  },
+});
 
-    const { sessions, additionalEntries, instructor, payPeriod, submission } = data;
-    const gToken = await getGoogleAccessToken();
+export const retryPayPeriod = internalAction({
+  args: {
+    payPeriodNumber: v.number(),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, { payPeriodNumber, dryRun }) => {
+    const candidates = await ctx.runQuery(
+      internal.submissions.getSubmittedUnsyncedForPeriod,
+      { payPeriodNumber }
+    ) as Array<{
+      submissionId: Id<"submissions">;
+      instructorName: string;
+      submittedAt?: number;
+      totalRows: number;
+    }>;
 
-    // Read instructor config from Instructors sheet tab
-    const instructorConfigs = await getInstructorConfigs(gToken);
-    const instructorConfig = instructor ? instructorConfigs.get(instructor.name) : undefined;
-
-    if (instructorConfig && !instructorConfig.includeInPayroll) {
-      console.log(`Skipping ${instructor?.name} — excluded from payroll`);
-      return;
+    if (dryRun) {
+      return {
+        payPeriodNumber,
+        dryRun: true,
+        count: candidates.length,
+        submissions: candidates.map((candidate) => ({
+          instructorName: candidate.instructorName,
+          submittedAt: candidate.submittedAt,
+          totalRows: candidate.totalRows,
+        })),
+      };
     }
 
-    const instructorName = instructor?.name ?? "Unknown";
-    const payPeriodNum = payPeriod?.number ?? 0;
-    const rateMap = new Map(
-      (submission.availableRates ?? []).map((r) => [r.label, r.rate])
-    );
+    const results: Array<{
+      instructorName: string;
+      success: boolean;
+      error?: string;
+    }> = [];
 
-    // Build rows starting after the last occupied row in the app-managed A:L area.
-    // Avoid values.append here: Sheets can infer a table from manual notes in later
-    // columns and place rows outside the payroll columns.
-    const validMembershipCounts = (submission.membershipCounts ?? []).filter((m) => m.count > 0);
-    const totalRows = sessions.length + additionalEntries.length + validMembershipCounts.length;
-    if (totalRows === 0) {
-      console.log(`No rows to write for ${instructorName}`);
-      await ctx.runMutation(internal.submissions.markSynced, { submissionId });
-      return;
+    for (const candidate of candidates) {
+      try {
+        await syncSubmission(ctx, candidate.submissionId);
+        results.push({ instructorName: candidate.instructorName, success: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        console.error(`Retry sync failed for ${candidate.instructorName}:`, message);
+        results.push({
+          instructorName: candidate.instructorName,
+          success: false,
+          error: message,
+        });
+      }
     }
 
-    // Fetch the Payroll tab's sheetId (needed for formatting requests)
-    const sheetId = await getPayrollSheetId(gToken);
-
-    // Step 1: Determine the next row from columns A:L only.
-    const startRow = await getNextPayrollStartRow(gToken);
-
-    // Step 2: Build proper rows now that we know row numbers.
-    const rows: string[][] = [];
-    let rowIdx = startRow;
-    const endRow = startRow + totalRows - 1;
-    // K column: SUM of all instructor earnings for this block, on the first row only
-    const kTotal = `=SUM(I${startRow}:I${endRow})`;
-
-    for (const session of sessions) {
-      const isFirst = rows.length === 0;
-      const grossFormula = session.pricePerBooking > 0 ? `=E${rowIdx}*G${rowIdx}` : "";
-      rows.push([
-        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
-        isFirst ? instructorName : "",                     // B: Instructor
-        session.info,                                      // C: Class name / description
-        session.category,                                  // D: Category
-        String(session.quantity),                          // E: Student count (or 1 for privates)
-        session.confirmedByInstructor ? "TRUE" : "DISPUTED", // F: Confirmed
-        session.pricePerBooking > 0 ? `$${session.pricePerBooking.toFixed(2)}` : "", // G: Price per booking
-        grossFormula,                                      // H: Gross Total (=E*G)
-        session.pricePerBooking > 0 ? earningsFormula(rowIdx) : "", // I: Instructor Earnings
-        "",                                                // J: Commissions
-        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
-        "",                                                // L: (unused)
-      ]);
-      rowIdx++;
-    }
-
-    for (const entry of additionalEntries) {
-      const isFirst = rows.length === 0;
-      const rate = rateMap.get(entry.type) ?? 0;
-      const earnings = rate > 0 ? (entry.hours * rate).toFixed(2) : "";
-      rows.push([
-        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
-        isFirst ? instructorName : "",                     // B: Instructor
-        entry.notes ? `${entry.type} - ${entry.notes}` : entry.type, // C: Description
-        entry.type,                                        // D: Category
-        String(entry.hours),                               // E: Hours
-        "TRUE",                                            // F: Confirmed
-        rate > 0 ? `$${rate.toFixed(2)}` : "",             // G: Hourly rate
-        rate > 0 ? `=E${rowIdx}*G${rowIdx}` : "",          // H: Total
-        earnings,                                          // I: Instructor Earnings (flat: hours × rate)
-        "",                                                // J: Commissions
-        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
-        "",                                                // L: (unused)
-      ]);
-      rowIdx++;
-    }
-
-    for (const membership of validMembershipCounts) {
-      const isFirst = rows.length === 0;
-      rows.push([
-        isFirst ? String(payPeriodNum) : "",              // A: Pay Period
-        isFirst ? instructorName : "",                     // B: Instructor
-        membership.label,                                  // C: e.g. "Monthly Limited"
-        "Membership",                                      // D: triggers the earnings formula
-        String(membership.count),                          // E: number of members
-        "TRUE",                                            // F: Confirmed
-        `$${membership.pricePerMember.toFixed(2)}`,        // G: price per member
-        `=E${rowIdx}*G${rowIdx}`,                          // H: total revenue (count × price)
-        earningsFormula(rowIdx),                           // I: (H*0.97)*0.1 via D="Membership"
-        "",                                                // J: Commissions
-        isFirst ? kTotal : "",                             // K: Total to be paid (first row only)
-        "",                                                // L: (unused)
-      ]);
-      rowIdx++;
-    }
-
-    // Step 3: Overwrite the placeholder rows with the real data (with formulas)
-    await writeRows(gToken, `${PAYROLL_TAB}!A${startRow}:L${endRow}`, rows);
-
-    // Step 4: Apply formatting — background, bold name, bold total, bottom border
-    await formatBlock(gToken, sheetId, startRow, endRow, instructorName, instructorConfig?.sheetColor);
-
-    // Step 5: Draw a bold black top border if this is the first instructor of a new pay period
-    await addPayPeriodSeparatorIfNeeded(gToken, sheetId, startRow, payPeriodNum);
-
-    console.log(
-      `Wrote ${rows.length} rows for ${instructorName} (Pay Period ${payPeriodNum}) ` +
-      `at Payroll rows ${startRow}–${endRow} ` +
-      `(${sessions.length} sessions, ${additionalEntries.length} additional entries)`
-    );
-
-    // Mark everything as synced in Convex
-    await ctx.runMutation(internal.submissions.markSynced, { submissionId });
+    return {
+      payPeriodNumber,
+      dryRun: false,
+      count: candidates.length,
+      succeeded: results.filter((result) => result.success).length,
+      failed: results.filter((result) => !result.success).length,
+      results,
+    };
   },
 });
