@@ -8,7 +8,6 @@ import {
   saveAdminSecret,
   clearAdminSecret,
   instructorColor,
-  formatCurrency,
   formatShortDate,
 } from "@/lib/admin";
 
@@ -17,10 +16,6 @@ type HistoryRow = {
   category: string;
   quantity: number;
   confirmed: boolean;
-  pricePerBooking: number | null;
-  grossTotal: number | null;
-  instructorEarnings: number | null;
-  commissions: null;
 };
 
 type HistoryBlock = {
@@ -31,7 +26,6 @@ type HistoryBlock = {
   instructorName: string;
   submittedAt?: number;
   instructorNotes?: string;
-  toBePaid: number;
   synced: boolean;
   rows: HistoryRow[];
 };
@@ -48,19 +42,14 @@ type HistoryData = {
   blocks: HistoryBlock[];
 };
 
-// Column widths tuned to the spreadsheet's proportions — Info is the wide one.
+// Column widths follow the spreadsheet's proportions — Info is the wide one.
 const COLUMNS = [
-  { label: "Pay Period", width: 70, align: "right" as const },
-  { label: "Instructor", width: 135, align: "left" as const },
-  { label: "Info", width: 270, align: "left" as const },
-  { label: "Category", width: 105, align: "left" as const },
-  { label: "Quantity/hours", width: 90, align: "right" as const },
-  { label: "Confirmed", width: 80, align: "left" as const },
-  { label: "Price Per Booking", width: 95, align: "right" as const },
-  { label: "Gross Total ($)", width: 95, align: "right" as const },
-  { label: "Instructor Earnings", width: 105, align: "right" as const },
-  { label: "Commissions", width: 90, align: "right" as const },
-  { label: "To Be Paid this Period", width: 120, align: "right" as const },
+  { label: "Pay Period", width: 80, align: "right" as const },
+  { label: "Instructor", width: 230, align: "left" as const },
+  { label: "Info", width: 380, align: "left" as const },
+  { label: "Category", width: 150, align: "left" as const },
+  { label: "Quantity/hours", width: 110, align: "right" as const },
+  { label: "Confirmed", width: 100, align: "left" as const },
 ];
 
 const CELL_BORDER = "1px solid rgba(0,0,0,0.12)";
@@ -136,7 +125,6 @@ export default function History() {
   }
 
   const blocks = data?.blocks ?? [];
-  const grandTotal = blocks.reduce((sum, b) => sum + b.toBePaid, 0);
   const rowCount = blocks.reduce((sum, b) => sum + b.rows.length, 0);
 
   return (
@@ -148,7 +136,7 @@ export default function History() {
         color: C.black,
       }}
     >
-      <div style={{ maxWidth: 1640, margin: "0 auto", padding: "48px 24px 80px" }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "48px 24px 80px" }}>
         {/* Header */}
         <div style={{ marginBottom: 24 }}>
           <p
@@ -208,10 +196,8 @@ export default function History() {
 
           {data && !loading && (
             <p style={{ fontSize: 13, color: "#6b6b6b", margin: 0 }}>
-              {blocks.length} instructor {blocks.length === 1 ? "block" : "blocks"} ·{" "}
-              {rowCount} {rowCount === 1 ? "row" : "rows"} ·{" "}
-              <strong style={{ color: C.black }}>{formatCurrency(grandTotal)}</strong> to
-              be paid
+              {blocks.length} {blocks.length === 1 ? "submission" : "submissions"} ·{" "}
+              {rowCount} {rowCount === 1 ? "entry" : "entries"}
             </p>
           )}
         </div>
@@ -277,7 +263,7 @@ export default function History() {
                 borderCollapse: "collapse",
                 fontSize: 13,
                 width: "100%",
-                minWidth: 1255,
+                minWidth: 1050,
               }}
             >
               <thead>
@@ -314,6 +300,8 @@ export default function History() {
                   // The sheet draws a bold black rule where the pay period changes.
                   const startsNewPeriod =
                     !prev || prev.payPeriodNumber !== block.payPeriodNumber;
+                  const blockBorder = "1px solid rgba(0,0,0,0.35)";
+                  const topBorder = startsNewPeriod ? "2px solid #000" : undefined;
 
                   return (
                     <Fragment key={`${block.payPeriodNumber}-${block.instructorName}`}>
@@ -322,65 +310,95 @@ export default function History() {
                         const isLast = rowIdx === block.rows.length - 1;
                         const cellStyle: React.CSSProperties = {
                           padding: "5px 8px",
+                          verticalAlign: "top",
                           borderRight: CELL_BORDER,
-                          borderTop:
-                            isFirst && startsNewPeriod
-                              ? "2px solid #000"
-                              : undefined,
-                          borderBottom: isLast
-                            ? "1px solid rgba(0,0,0,0.35)"
-                            : undefined,
+                          borderTop: isFirst ? topBorder : undefined,
+                          borderBottom: isLast ? blockBorder : undefined,
                           whiteSpace: "nowrap",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                         };
+                        // Pay period and instructor are merged down the block,
+                        // the way they read as one label in the sheet. Merging
+                        // also keeps the admin note from stretching the first
+                        // row out of line with the rest.
+                        const mergedStyle: React.CSSProperties = {
+                          ...cellStyle,
+                          borderTop: topBorder,
+                          borderBottom: blockBorder,
+                        };
 
                         return (
                           <tr key={rowIdx} style={{ background }}>
-                            {/* A: Pay Period — first row of the block only */}
-                            <td style={{ ...cellStyle, textAlign: "right", fontWeight: 700 }}>
-                              {isFirst ? block.payPeriodNumber : ""}
-                            </td>
-                            {/* B: Instructor — first row of the block only */}
-                            <td
-                              style={{
-                                ...cellStyle,
-                                fontWeight: 700,
-                                fontSize: isFirst ? 13.5 : 13,
-                              }}
-                              title={
-                                isFirst && block.instructorNotes
-                                  ? block.instructorNotes
-                                  : undefined
-                              }
-                            >
-                              {isFirst ? (
-                                <span
-                                  style={{ display: "flex", alignItems: "center", gap: 6 }}
+                            {isFirst && (
+                              <>
+                                {/* A: Pay Period */}
+                                <td
+                                  rowSpan={block.rows.length}
+                                  style={{
+                                    ...mergedStyle,
+                                    textAlign: "right",
+                                    fontWeight: 700,
+                                  }}
                                 >
-                                  {block.instructorName}
-                                  {!block.synced && (
+                                  {block.payPeriodNumber}
+                                </td>
+                                {/* B: Instructor, with their note for the admin */}
+                                <td
+                                  rowSpan={block.rows.length}
+                                  style={{
+                                    ...mergedStyle,
+                                    fontWeight: 700,
+                                    fontSize: 13.5,
+                                    // The note wraps, so this cell can't stay
+                                    // on one line like the rest.
+                                    whiteSpace: "normal",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    {block.instructorName}
+                                    {!block.synced && (
+                                      <span
+                                        title="Not yet synced to the spreadsheet"
+                                        style={{
+                                          fontSize: 9,
+                                          fontWeight: 700,
+                                          letterSpacing: "0.06em",
+                                          color: "#92400e",
+                                          background: "#fef3c7",
+                                          border: "1px solid #fde68a",
+                                          borderRadius: 4,
+                                          padding: "1px 4px",
+                                        }}
+                                      >
+                                        UNSYNCED
+                                      </span>
+                                    )}
+                                  </span>
+                                  {block.instructorNotes && (
                                     <span
-                                      title="Not yet synced to the spreadsheet"
                                       style={{
-                                        fontSize: 9,
-                                        fontWeight: 700,
-                                        letterSpacing: "0.06em",
-                                        color: "#92400e",
-                                        background: "#fef3c7",
-                                        border: "1px solid #fde68a",
-                                        borderRadius: 4,
-                                        padding: "1px 4px",
+                                        display: "block",
+                                        marginTop: 5,
+                                        fontSize: 11.5,
+                                        fontWeight: 400,
+                                        fontStyle: "italic",
+                                        lineHeight: 1.4,
+                                        color: "#4a4a4a",
                                       }}
                                     >
-                                      UNSYNCED
+                                      “{block.instructorNotes}”
                                     </span>
                                   )}
-                                </span>
-                              ) : (
-                                ""
-                              )}
-                            </td>
+                                </td>
+                              </>
+                            )}
                             {/* C: Info */}
                             <td style={{ ...cellStyle, fontWeight: 600 }} title={row.info}>
                               {row.info}
@@ -395,40 +413,12 @@ export default function History() {
                             <td
                               style={{
                                 ...cellStyle,
+                                borderRight: undefined,
                                 fontWeight: row.confirmed ? 400 : 700,
                                 color: row.confirmed ? undefined : "#991b1b",
                               }}
                             >
                               {row.confirmed ? "TRUE" : "DISPUTED"}
-                            </td>
-                            {/* G: Price per booking */}
-                            <td style={{ ...cellStyle, textAlign: "right" }}>
-                              {row.pricePerBooking === null
-                                ? ""
-                                : formatCurrency(row.pricePerBooking)}
-                            </td>
-                            {/* H: Gross total */}
-                            <td style={{ ...cellStyle, textAlign: "right" }}>
-                              {row.grossTotal === null ? "" : formatCurrency(row.grossTotal)}
-                            </td>
-                            {/* I: Instructor earnings */}
-                            <td style={{ ...cellStyle, textAlign: "right" }}>
-                              {row.instructorEarnings === null
-                                ? ""
-                                : formatCurrency(row.instructorEarnings)}
-                            </td>
-                            {/* J: Commissions — filled in by hand in the sheet */}
-                            <td style={{ ...cellStyle, textAlign: "right" }} />
-                            {/* K: To be paid — first row of the block only */}
-                            <td
-                              style={{
-                                ...cellStyle,
-                                textAlign: "right",
-                                fontWeight: 700,
-                                borderRight: undefined,
-                              }}
-                            >
-                              {isFirst ? formatCurrency(block.toBePaid) : ""}
                             </td>
                           </tr>
                         );

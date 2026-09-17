@@ -68,15 +68,6 @@ export function instructorColor(name: string): string {
   return INSTRUCTOR_COLORS[hash];
 }
 
-export function formatCurrency(n: number): string {
-  return n.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
 export function formatShortDate(iso: string, includeYear = false): string {
   const d = new Date(iso + "T12:00:00");
   return d.toLocaleDateString("en-US", {
