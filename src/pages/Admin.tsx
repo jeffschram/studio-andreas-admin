@@ -1,20 +1,13 @@
 import { useState, useEffect } from "react";
-
-// Studio Andreas brand palette
-const C = {
-  green: "#344734",
-  orange: "#F1A638",
-  cream: "#F0DEC6",
-  black: "#000000",
-  white: "#FFFFFF",
-  offwhite: "#FAFAFA",
-};
-
-// Dev: use relative path so Vite proxies the request (avoids CORS).
-// Production: use the full Convex site URL directly.
-const API_BASE = import.meta.env.DEV
-  ? ''
-  : (import.meta.env.VITE_CONVEX_SITE_URL as string ?? '');
+import AdminNav from "@/components/AdminNav";
+import AdminLogin from "@/components/AdminLogin";
+import {
+  C,
+  API_BASE,
+  loadAdminSecret,
+  saveAdminSecret,
+  clearAdminSecret,
+} from "@/lib/admin";
 
 type Appointment = {
   info: string;
@@ -82,9 +75,8 @@ function formatDate(iso: string, includeYear = false): string {
 }
 
 export default function Admin() {
-  const [password, setPassword] = useState("");
-  const [authenticated, setAuthenticated] = useState(false);
-  const [adminSecret, setAdminSecret] = useState("");
+  const [adminSecret, setAdminSecret] = useState(() => loadAdminSecret());
+  const authenticated = adminSecret !== "";
 
   // Pay period data
   const [data, setData] = useState<PayPeriodData | null>(null);
@@ -119,7 +111,8 @@ export default function Admin() {
     })
       .then(async (res) => {
         if (res.status === 401) {
-          setAuthenticated(false);
+          clearAdminSecret();
+          setAdminSecret("");
           setError("Unauthorized — check admin password");
           return;
         }
@@ -139,10 +132,15 @@ export default function Admin() {
   );
   const isCurrent = selectedPeriod === data?.currentPeriodNumber;
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAdminSecret(password);
-    setAuthenticated(true);
+  const handleLogin = (pw: string) => {
+    saveAdminSecret(pw);
+    setAdminSecret(pw);
+  };
+
+  const handleLogOut = () => {
+    clearAdminSecret();
+    setAdminSecret("");
+    setData(null);
   };
 
   const fetchPreview = (num: number, secret: string) => {
@@ -261,84 +259,7 @@ export default function Admin() {
 
   // ── Login screen ──
   if (!authenticated) {
-    return (
-      <div
-        style={{
-          background: C.cream,
-          minHeight: "100vh",
-          fontFamily: "system-ui, -apple-system, sans-serif",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <form
-          onSubmit={handleLogin}
-          style={{
-            background: C.white,
-            padding: 40,
-            borderRadius: 12,
-            boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
-            maxWidth: 380,
-            width: "100%",
-          }}
-        >
-          <p
-            style={{
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.15em",
-              color: C.green,
-              textTransform: "uppercase",
-              marginBottom: 8,
-            }}
-          >
-            Studio Andreas
-          </p>
-          <h1
-            style={{
-              fontSize: 24,
-              fontWeight: 700,
-              margin: "0 0 24px",
-              color: C.black,
-            }}
-          >
-            Admin Login
-          </h1>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Admin password"
-            style={{
-              width: "100%",
-              padding: "10px 14px",
-              borderRadius: 8,
-              border: "1px solid #ddd",
-              fontSize: 15,
-              marginBottom: 16,
-              boxSizing: "border-box",
-            }}
-          />
-          <button
-            type="submit"
-            style={{
-              width: "100%",
-              padding: "10px 0",
-              borderRadius: 8,
-              background: C.green,
-              color: C.white,
-              fontSize: 15,
-              fontWeight: 600,
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            Log In
-          </button>
-        </form>
-      </div>
-    );
+    return <AdminLogin title="Admin Login" onSubmit={handleLogin} />;
   }
 
   // ── Main admin page ──
@@ -374,6 +295,8 @@ export default function Admin() {
             Payroll
           </h1>
         </div>
+
+        <AdminNav current="payroll" onLogOut={handleLogOut} />
 
         {/* Loading state */}
         {loading && (

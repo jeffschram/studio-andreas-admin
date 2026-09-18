@@ -194,6 +194,57 @@ http.route({
   }),
 });
 
+// CORS preflight for /api/payroll-history
+http.route({
+  path: "/api/payroll-history",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+// GET /api/payroll-history?payPeriodNumber=6
+// Omit payPeriodNumber to get every pay period.
+// Header: Authorization: Bearer <ADMIN_SECRET>
+http.route({
+  path: "/api/payroll-history",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    const authHeader = request.headers.get("Authorization") ?? "";
+    if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const url = new URL(request.url);
+    const num = url.searchParams.get("payPeriodNumber");
+    if (num !== null && !/^\d+$/.test(num)) {
+      return new Response(JSON.stringify({ error: "payPeriodNumber must be a number" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    const result = await ctx.runQuery(internal.payrollHistory.getHistory, {
+      payPeriodNumber: num !== null ? parseInt(num) : undefined,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }),
+});
+
 // CORS preflight for /api/retry-sync-pay-period
 http.route({
   path: "/api/retry-sync-pay-period",
