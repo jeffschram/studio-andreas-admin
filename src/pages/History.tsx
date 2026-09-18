@@ -42,14 +42,14 @@ type HistoryData = {
   blocks: HistoryBlock[];
 };
 
-// Column widths follow the spreadsheet's proportions — Info is the wide one.
+// No explicit widths — the browser sizes each column from its content.
 const COLUMNS = [
-  { label: "Pay Period", width: 80, align: "right" as const },
-  { label: "Instructor", width: 230, align: "left" as const },
-  { label: "Info", width: 380, align: "left" as const },
-  { label: "Category", width: 150, align: "left" as const },
-  { label: "Quantity/hours", width: 110, align: "right" as const },
-  { label: "Confirmed", width: 100, align: "left" as const },
+  { label: "Pay Period", align: "right" as const },
+  { label: "Instructor", align: "left" as const },
+  { label: "Info", align: "left" as const },
+  { label: "Category", align: "left" as const },
+  { label: "Quantity/hours", align: "right" as const },
+  { label: "Confirmed", align: "left" as const },
 ];
 
 const CELL_BORDER = "1px solid rgba(0,0,0,0.12)";
@@ -84,14 +84,23 @@ export default function History() {
           setAuthError("Unauthorized — check admin password");
           return;
         }
-        if (!res.ok) throw new Error(await res.text());
+        if (!res.ok) {
+          const detail = (await res.text()).trim();
+          // Convex answers an unrouted path with a bare "No matching routes
+          // found", which says nothing useful to whoever is looking at it.
+          throw new Error(
+            res.status === 404
+              ? "The payroll history endpoint isn't on this Convex deployment yet. Run `npx convex dev` to push it."
+              : `Request failed (${res.status})${detail ? `: ${detail}` : ""}`
+          );
+        }
         const json = (await res.json()) as HistoryData;
         if (cancelled) return;
         setData(json);
         setError(null);
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
+        if (!cancelled) setError(err?.message || "Could not load payroll history.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -263,7 +272,6 @@ export default function History() {
                 borderCollapse: "collapse",
                 fontSize: 13,
                 width: "100%",
-                minWidth: 1050,
               }}
             >
               <thead>
@@ -272,8 +280,6 @@ export default function History() {
                     <th
                       key={col.label}
                       style={{
-                        width: col.width,
-                        minWidth: col.width,
                         textAlign: col.align,
                         padding: "8px 8px",
                         fontWeight: 700,
@@ -314,9 +320,6 @@ export default function History() {
                           borderRight: CELL_BORDER,
                           borderTop: isFirst ? topBorder : undefined,
                           borderBottom: isLast ? blockBorder : undefined,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
                         };
                         // Pay period and instructor are merged down the block,
                         // the way they read as one label in the sheet. Merging
@@ -350,9 +353,6 @@ export default function History() {
                                     ...mergedStyle,
                                     fontWeight: 700,
                                     fontSize: 13.5,
-                                    // The note wraps, so this cell can't stay
-                                    // on one line like the rest.
-                                    whiteSpace: "normal",
                                   }}
                                 >
                                   <span
@@ -400,7 +400,7 @@ export default function History() {
                               </>
                             )}
                             {/* C: Info */}
-                            <td style={{ ...cellStyle, fontWeight: 600 }} title={row.info}>
+                            <td style={{ ...cellStyle, fontWeight: 600 }}>
                               {row.info}
                             </td>
                             {/* D: Category */}
