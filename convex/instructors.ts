@@ -8,12 +8,19 @@ export const upsert = mutation({
     acuityCalendarId: v.number(),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("instructors")
-      .withIndex("by_calendar_id", (q) =>
-        q.eq("acuityCalendarId", args.acuityCalendarId)
-      )
-      .unique();
+    // Instructors without an Acuity calendar (ID 0 / blank) all share the same
+    // calendar ID, so match them by email instead.
+    const email = args.email.trim().toLowerCase();
+    const existing = args.acuityCalendarId
+      ? await ctx.db
+          .query("instructors")
+          .withIndex("by_calendar_id", (q) =>
+            q.eq("acuityCalendarId", args.acuityCalendarId)
+          )
+          .unique()
+      : (await ctx.db.query("instructors").collect()).find(
+          (i) => !i.acuityCalendarId && i.email.trim().toLowerCase() === email
+        );
 
     if (existing) {
       await ctx.db.patch(existing._id, {
