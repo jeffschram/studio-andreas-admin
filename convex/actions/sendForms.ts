@@ -251,7 +251,7 @@ async function sendFormsHandler(ctx: any, args: SendFormsArgs) {
 
     // Iterate ALL active instructors — not just those with appointments
     for (const instructorRow of activeInstructors) {
-      const calId = parseInt(instructorRow[3]);
+      const calId = parseInt(instructorRow[3]) || 0; // blank = no Acuity calendar
       const [name, email] = instructorRow;
       const getsSeriesPay = instructorRow[5]?.toLowerCase() === "yes";
       const appts = byCalendar.get(calId) ?? [];
@@ -608,7 +608,7 @@ export const previewPeriodInternal = internalAction({
 
     // Build per-instructor appointment summaries (same series logic as sendForms)
     const instructors = await Promise.all(activeInstructors.map(async (row) => {
-      const calId = parseInt(row[3]);
+      const calId = parseInt(row[3]) || 0; // blank = no Acuity calendar
       const getsSeriesPay = row[5]?.toLowerCase() === "yes";
       const appts = byCalendar.get(calId) ?? [];
       const hasRates = rateHeadersPreview.some((_, i) => parseFloat(row[6 + i] ?? "") > 0);
